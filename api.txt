@@ -1,0 +1,17 @@
+GET / health - 서버 상태 점검
+구분    내용
+요청    없음
+응답(JSON) { "status":"ok"}
+
+응답    타입    설명
+status  string  보통"ok"
+
+
+POST / chat - llm과 채팅
+구분    내용
+요청(JSON)  { "question": "'general_chat'+'persona'점심 메뉴는 무엇으로 할까요?" }
+응답(JSON)  { "answer": "..." }
+동작    사용자가 보낸 텍스트에 llm이 대답.
+
+응답    타입    설명
+answer  string  llm의 답변
