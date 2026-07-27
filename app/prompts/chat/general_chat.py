@@ -1,8 +1,16 @@
-from app.prompts.personas.persona001 import persona
+from app.prompts.composer import PromptComposer
 
 
-general_chat_prompt = "당신은 한국어를 배우려는 외국인과 대화하는 학습친구입니다."
+composer = PromptComposer("app/prompts")
 
 
 def build_chat_prompt(question: str) -> str:
-    return f"{general_chat_prompt}\n{persona}\n\n사용자 질문: {question}"
+    prompts = [
+        composer.load("identities", "friend"),
+        composer.load("personalities", "friendly"),
+        composer.load("rules", "safety"),
+        composer.load("rules", "no_hallucination"),
+        composer.load("styles", "concise"),
+    ]
+    base_prompt = composer.compose_by_priority(prompts)
+    return f"{base_prompt}\n\n사용자 질문: {question}"
