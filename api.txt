@@ -15,3 +15,50 @@ POST / chat - llm과 채팅
 
 응답    타입    설명
 answer  string  llm의 답변
+
+
+POST /expression-feedback - 문장 표현 피드백
+구분    내용
+요청(JSON)
+{
+  "text": "저는 지난주에 고객 미팅을 진행해요.",
+  "context": {
+    "previous_utterances": [
+      {
+        "speaker": "listener",
+        "text": "지난주에는 어떤 업무를 했어요?"
+      }
+    ],
+    "situation": "지난주 업무 보고",
+    "relationship": "coworker",
+    "relative_status": "peer",
+    "formality": "polite",
+    "communication_type": "spoken"
+  }
+}
+
+응답(JSON)
+{
+  "feedback": "지난주에 완료한 업무를 보고하는 상황이므로 과거형을 사용하는 것이 자연스럽습니다.",
+  "suggested_text": "저는 지난주에 고객 미팅을 진행했습니다.",
+  "issues": [
+    {
+      "type": "tense",
+      "expression": "진행해요",
+      "suggestion": "진행했습니다",
+      "reason": "지난주에 완료된 업무를 나타내기 때문입니다."
+    }
+  ]
+}
+
+동작    사용자가 보낸 문장의 자연스러움, 어법, 어휘, 높임말과 정중함을 문맥과 함께 평가.
+
+응답    타입    설명
+feedback  string  입력 문장의 표현에 대한 간결한 피드백
+suggested_text  string  문맥에 적절한 추천 전체 문장
+issues  array  발견된 표현 문제 목록. 문제가 없으면 빈 배열
+
+환경 변수
+OPENAI_API_KEY  필수. OpenAI API 키
+OPENAI_EXPRESSION_FEEDBACK_MODEL  선택. 기본값 gpt-5.6-terra
+OPENAI_TIMEOUT_SECONDS  선택. 기본값 30초

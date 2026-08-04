@@ -8,3 +8,4 @@ langchain-text-splitters
 python-dotenv
 pydantic
 PyYAML
+openai>=2.53.0
