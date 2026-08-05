@@ -1,5 +1,6 @@
 id: roleplay
 version: 1
+description: 지정한 캐릭터와의 역할극 대화
 priority: 70
 
 prompt: |
