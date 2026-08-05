@@ -1,6 +1,6 @@
 id: citation
 version: 1
-priority: 75
+priority: 80
 
 prompt: |
   # Citation

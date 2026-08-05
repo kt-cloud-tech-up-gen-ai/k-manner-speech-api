@@ -2,11 +2,14 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-ROOT = next((p for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents] 
-             if(p / "data").exists()), Path(__file__).resolve().parents[3])
+ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 
 load_dotenv(ROOT / ".env")
 load_dotenv()
 
 CHAT_MODEL = "gemini-2.5-flash"
+
+
+def get_api_key() -> str | None:
+    return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")

@@ -1,6 +1,6 @@
 id: behavior
 version: 1
-priority: 80
+priority: 75
 
 prompt: |
   # Behavior
