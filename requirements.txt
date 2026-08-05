@@ -8,3 +8,5 @@ langchain-text-splitters
 python-dotenv
 pydantic
 PyYAML
+SQLAlchemy
+psycopg[binary]
