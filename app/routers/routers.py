@@ -6,7 +6,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import CHAT_MODEL, get_api_key
 from app.prompt_builder.general_chat import build_chat_prompt
@@ -25,10 +25,30 @@ class ChatResponse(BaseModel):
     answer: str
 
 
+class GenerationConfig(BaseModel):
+    """Gemini generateContent의 생성 설정."""
+
+    temperature: float = Field(0.3, ge=0.0, le=2.0)
+    maxOutputTokens: int = Field(1000, gt=0)
+
+
 class AskGeminiRequest(BaseModel):
     systemInstruction: str
     contents: str
-    generationConfig: dict[str, Any]
+    generationConfig: GenerationConfig = Field(default_factory=GenerationConfig)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "systemInstruction": "당신의 이름은 도윤이고, 대학선배입니다. 한국어로 친절하게 답변하세요.",
+                "contents": "선배님 안녕하세요",
+                "generationConfig": {
+                    "temperature": 0.3,
+                    "maxOutputTokens": 1000,
+                },
+            }
+        }
+    }
 
 
 class HealthResponse(BaseModel):
@@ -64,7 +84,7 @@ def ask_gemini(request: AskGeminiRequest) -> ChatResponse:
     payload = {
         "systemInstruction": {"parts": [{"text": request.systemInstruction}]},
         "contents": [{"role": "user", "parts": [{"text": request.contents}]}],
-        "generationConfig": request.generationConfig,
+        "generationConfig": request.generationConfig.model_dump(),
     }
     endpoint = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
