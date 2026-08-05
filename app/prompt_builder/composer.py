@@ -6,7 +6,18 @@ import yaml
 
 class PromptComposer:
     def __init__(self, prompt_root: str | Path = "prompts"):
-        self.root = Path(prompt_root)
+        raw_root = Path(prompt_root)
+        if raw_root.is_absolute():
+            self.root = raw_root.resolve()
+        else:
+            start = Path(__file__).resolve().parent
+            for parent in [start, *start.parents]:
+                candidate = parent / raw_root
+                if candidate.exists():
+                    self.root = candidate.resolve()
+                    break
+            else:
+                self.root = (Path.cwd() / raw_root).resolve()
 
     def _load_yaml(self, path: Path) -> dict:
         with path.open("r", encoding="utf-8") as f:
@@ -35,6 +46,46 @@ class PromptComposer:
             raise FileNotFoundError(path)
 
         return self._load_yaml(path)
+
+    def load_bundle(self, name: str) -> list[dict]:
+        """묶음 YAML에 정의된 개별 프롬프트를 모두 불러온다.
+
+        묶음 YAML은 ``bundles/<name>.yaml`` 경로에 두며, 각 항목은
+        ``category``와 ``name``을 가져야 한다.
+        """
+        path = self.root / "bundles" / f"{name}.yaml"
+        if not path.exists():
+            raise FileNotFoundError(path)
+
+        with path.open("r", encoding="utf-8") as f:
+            bundle = yaml.safe_load(f)
+
+        if not isinstance(bundle, dict):
+            raise ValueError(f"{path} is not a valid bundle yaml.")
+
+        items = bundle.get("prompts")
+        if not isinstance(items, list):
+            raise ValueError(f"{path} has no valid prompts list.")
+
+        prompts: list[dict] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"{path} prompts[{index}] is not an object.")
+
+            category = item.get("category")
+            prompt_name = item.get("name")
+            if not isinstance(category, str) or not isinstance(prompt_name, str):
+                raise ValueError(
+                    f"{path} prompts[{index}] must have string category and name."
+                )
+
+            prompts.append(self.load(category, prompt_name))
+
+        return prompts
+
+    def compose_bundle(self, name: str) -> str:
+        """묶음 YAML을 읽고, 포함된 프롬프트를 우선순위에 따라 합성한다."""
+        return self.compose_by_priority(self.load_bundle(name))
 
     def compose(self, *prompts: dict) -> str:
 

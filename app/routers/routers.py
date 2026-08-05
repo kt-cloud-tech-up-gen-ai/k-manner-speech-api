@@ -1,51 +1,166 @@
-import os
+import json
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.core.config import CHAT_MODEL
-from app.prompts.chat.general_chat import build_chat_prompt
+from app.core.config import CHAT_MODEL, get_api_key
+from app.prompt_builder.general_chat import build_chat_prompt
 
 
 router = APIRouter()
 
 
 class ChatRequest(BaseModel):
+    persona: str
+    history: list[dict[str, str]]
     question: str
 
 
-@router.get("/health")
-def health():
-    return {"status": "ok"}
+class ChatResponse(BaseModel):
+    answer: str
 
 
-@router.post("/chat")
-def chat(request: ChatRequest):
-    answer = generate_answer(request.question)
-    return {"answer": answer}
+class AskGeminiRequest(BaseModel):
+    systemInstruction: str
+    contents: str
+    generationConfig: dict[str, Any]
 
 
-def generate_answer(question: str) -> str:
-    prompt = build_chat_prompt(question)
+class HealthResponse(BaseModel):
+    status: str
 
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if api_key:
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            from langchain_core.messages import HumanMessage
 
-            llm = ChatGoogleGenerativeAI(
-                model=CHAT_MODEL,
-                google_api_key=api_key,
-                temperature=0.7,
-            )
-            response = llm.invoke([HumanMessage(content=prompt)])
-            content = getattr(response, "content", response)
-            if isinstance(content, list):
-                return "\n".join(str(item) for item in content)
-            return str(content)
-        except Exception as exc:
-            return f"LLM 호출 중 오류가 발생했습니다: {exc}"
+@router.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
 
-    return f"질문에 대한 답변을 준비했습니다. {question}"
 
+@router.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    """사용자 질문, 페르소나, 대화 이력을 LLM에 전달한다."""
+    if not request.question.strip():
+        return ChatResponse(answer="질문을 입력해 주세요.")
+
+    answer = generate_answer(
+        request.question,
+        persona=request.persona,
+        history=request.history,
+    )
+    return ChatResponse(answer=answer)
+
+
+@router.post("/ask_gemini", response_model=ChatResponse)
+def ask_gemini(request: AskGeminiRequest) -> ChatResponse:
+    """Gemini REST API에 시스템 지침, 입력 텍스트, 생성 설정을 전달한다."""
+    api_key = get_api_key()
+    if not api_key:
+        return ChatResponse(answer="API 키가 설정되지 않았습니다.")
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": request.systemInstruction}]},
+        "contents": [{"role": "user", "parts": [{"text": request.contents}]}],
+        "generationConfig": request.generationConfig,
+    }
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{quote(CHAT_MODEL, safe='')}:generateContent"
+    )
+    api_request = UrlRequest(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(api_request, timeout=60) as response:
+            response_data = json.loads(response.read().decode("utf-8"))
+        answer = extract_gemini_answer(response_data)
+        return ChatResponse(answer=answer or "Gemini 응답에 텍스트가 없습니다.")
+    except HTTPError as exc:
+        return ChatResponse(answer=f"Gemini API 요청에 실패했습니다. (HTTP {exc.code})")
+    except (URLError, TimeoutError):
+        return ChatResponse(answer="Gemini API에 연결하지 못했습니다.")
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return ChatResponse(answer="Gemini API 응답을 처리하지 못했습니다.")
+
+
+def extract_gemini_answer(response_data: Any) -> str:
+    """Gemini generateContent 응답의 모든 텍스트 파트를 결합한다."""
+    if not isinstance(response_data, dict):
+        return ""
+
+    candidates = response_data.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+
+    content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+
+    return "".join(
+        part["text"]
+        for part in parts
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    )
+
+
+def extract_text_from_response(response: Any) -> str:
+    if response is None:
+        return ""
+
+    content = getattr(response, "content", response)
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content") or ""
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                parts.append(extract_text_from_response(item))
+        return "".join(part for part in parts if part)
+
+    if isinstance(content, dict):
+        text = content.get("text") or content.get("content") or ""
+        if isinstance(text, str):
+            return text
+
+    return str(content)
+
+
+def generate_answer(question: str, persona: str, history: list[dict[str, str]]) -> str:
+    prompt = build_chat_prompt(question, persona=persona, history=history)
+
+    api_key = get_api_key()
+    if not api_key:
+        return f"API 키가 설정되지 않았습니다. .env 파일 또는 환경 변수에 GOOGLE_API_KEY/GEMINI_API_KEY를 넣어주세요."
+
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import HumanMessage
+
+        llm = ChatGoogleGenerativeAI(
+            model=CHAT_MODEL,
+            google_api_key=api_key,
+            temperature=0.7,
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        return extract_text_from_response(response)
+    except Exception as exc:
+        return f"LLM 호출 중 오류가 발생했습니다: {exc}"

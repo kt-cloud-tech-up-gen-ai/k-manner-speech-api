@@ -9,9 +9,21 @@ status  string  보통"ok"
 
 POST / chat - llm과 채팅
 구분    내용
-요청(JSON)  { "question": "'general_chat'+'persona'점심 메뉴는 무엇으로 할까요?" }
+요청(JSON)  { "persona": 응답 페르소나 }
+요청(JSON)  { "history": 이전에 대화했던 내역 }
+요청(JSON)  { "question": "(사용자 입력) 점심 메뉴는 무엇으로 할까요?" }
 응답(JSON)  { "answer": "..." }
 동작    사용자가 보낸 텍스트에 llm이 대답.
 
 응답    타입    설명
 answer  string  llm의 답변
+
+
+POST / ask_gemini - Gemini REST API 호출
+구분    내용
+요청(JSON)  { "systemInstruction": "시스템 지침", "contents": "사용자 입력", "generationConfig": { "temperature": 0.7 } }
+응답(JSON)  { "answer": "..." }
+동작    세 입력값을 하나의 JSON으로 받아 Gemini generateContent 요청을 만들고 LLM의 텍스트 응답을 반환.
+
+응답    타입    설명
+answer  string  Gemini의 답변
