@@ -1,18 +1,20 @@
 import json
+import logging
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import CHAT_MODEL, get_api_key
 from app.prompt_builder.general_chat import build_chat_prompt
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -28,14 +30,21 @@ class ChatResponse(BaseModel):
 class GenerationConfig(BaseModel):
     """Gemini generateContent의 생성 설정."""
 
-    temperature: float = Field(0.3, ge=0.0, le=2.0)
-    maxOutputTokens: int = Field(1000, gt=0)
+    model_config = ConfigDict(extra="forbid")
+
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    topP: float | None = Field(default=None, ge=0.0, le=1.0)
+    topK: int | None = Field(default=None, ge=1)
+    maxOutputTokens: int | None = Field(default=None, ge=1)
+    candidateCount: int | None = Field(default=None, ge=1)
+    stopSequences: list[str] | None = None
+    responseMimeType: str | None = None
 
 
 class AskGeminiRequest(BaseModel):
     systemInstruction: str
     contents: str
-    generationConfig: GenerationConfig = Field(default_factory=GenerationConfig)
+    generationConfig: GenerationConfig | None = None
 
     model_config = {
         "json_schema_extra": {
@@ -79,13 +88,17 @@ def ask_gemini(request: AskGeminiRequest) -> ChatResponse:
     """Gemini REST API에 시스템 지침, 입력 텍스트, 생성 설정을 전달한다."""
     api_key = get_api_key()
     if not api_key:
-        return ChatResponse(answer="API 키가 설정되지 않았습니다.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Gemini API가 구성되지 않았습니다.",
+        )
 
     payload = {
         "systemInstruction": {"parts": [{"text": request.systemInstruction}]},
         "contents": [{"role": "user", "parts": [{"text": request.contents}]}],
-        "generationConfig": request.generationConfig.model_dump(),
     }
+    if request.generationConfig is not None:
+        payload["generationConfig"] = request.generationConfig.model_dump(exclude_none=True)
     endpoint = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{quote(CHAT_MODEL, safe='')}:generateContent"
@@ -106,11 +119,43 @@ def ask_gemini(request: AskGeminiRequest) -> ChatResponse:
         answer = extract_gemini_answer(response_data)
         return ChatResponse(answer=answer or "Gemini 응답에 텍스트가 없습니다.")
     except HTTPError as exc:
-        return ChatResponse(answer=f"Gemini API 요청에 실패했습니다. (HTTP {exc.code})")
-    except (URLError, TimeoutError):
-        return ChatResponse(answer="Gemini API에 연결하지 못했습니다.")
-    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
-        return ChatResponse(answer="Gemini API 응답을 처리하지 못했습니다.")
+        upstream_body = _read_http_error_body(exc)
+        logger.warning(
+            "Gemini API returned HTTP %s: %s",
+            exc.code,
+            upstream_body or "<empty response body>",
+        )
+        client_status = 400 if 400 <= exc.code < 500 else 502
+        raise HTTPException(
+            status_code=client_status,
+            detail=f"Gemini API 요청이 거부되었습니다. (upstream HTTP {exc.code})",
+        ) from exc
+    except TimeoutError as exc:
+        logger.exception("Gemini API request timed out")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Gemini API 응답 시간이 초과되었습니다.",
+        ) from exc
+    except URLError as exc:
+        logger.exception("Could not connect to Gemini API")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gemini API에 연결하지 못했습니다.",
+        ) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+        logger.exception("Could not process Gemini API response")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gemini API 응답을 처리하지 못했습니다.",
+        ) from exc
+
+
+def _read_http_error_body(exc: HTTPError) -> str:
+    """진단용 upstream 본문을 읽되 로그가 과도하게 커지지 않게 제한한다."""
+    try:
+        return exc.read().decode("utf-8", errors="replace")[:4096]
+    except OSError:
+        return "<failed to read response body>"
 
 
 def extract_gemini_answer(response_data: Any) -> str:
@@ -169,7 +214,10 @@ def generate_answer(question: str, persona: str, history: list[dict[str, str]]) 
 
     api_key = get_api_key()
     if not api_key:
-        return f"API 키가 설정되지 않았습니다. .env 파일 또는 환경 변수에 GOOGLE_API_KEY/GEMINI_API_KEY를 넣어주세요."
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM API가 구성되지 않았습니다.",
+        )
 
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -182,5 +230,15 @@ def generate_answer(question: str, persona: str, history: list[dict[str, str]]) 
         )
         response = llm.invoke([HumanMessage(content=prompt)])
         return extract_text_from_response(response)
+    except TimeoutError as exc:
+        logger.exception("LLM request timed out")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="LLM 응답 시간이 초과되었습니다.",
+        ) from exc
     except Exception as exc:
-        return f"LLM 호출 중 오류가 발생했습니다: {exc}"
+        logger.exception("LLM request failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM 호출에 실패했습니다.",
+        ) from exc
