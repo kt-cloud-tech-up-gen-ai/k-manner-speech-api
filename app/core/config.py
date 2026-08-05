@@ -1,17 +1,12 @@
 import os
 from pathlib import Path
-
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = next((p for p in [Path(__file__).resolve().parent, *Path(__file__).resolve().parents] 
+             if(p / "data").exists()), Path(__file__).resolve().parents[3])
+DATA = ROOT / "data"
 
 load_dotenv(ROOT / ".env")
 load_dotenv()
 
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gemini-2.5-flash")
-
-EXPRESSION_FEEDBACK_MODEL = os.getenv(
-    "OPENAI_EXPRESSION_FEEDBACK_MODEL",
-    "gpt-5.6-terra",
-)
-OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
+CHAT_MODEL = "gemini-2.5-flash"
