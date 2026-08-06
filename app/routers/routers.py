@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     persona: str
-    history: list[dict[str, str]]
     question: str
 
 
@@ -52,7 +51,7 @@ class AskGeminiRequest(BaseModel):
                 "systemInstruction": "당신의 이름은 도윤이고, 대학선배입니다. 한국어로 친절하게 답변하세요.",
                 "contents": "선배님 안녕하세요",
                 "generationConfig": {
-                    "temperature": 0.3,
+                    "temperature": 0.7,
                     "maxOutputTokens": 1000,
                 },
             }
@@ -71,14 +70,13 @@ def health() -> HealthResponse:
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
-    """사용자 질문, 페르소나, 대화 이력을 LLM에 전달한다."""
+    """사용자 질문과 페르소나를 LLM에 전달한다."""
     if not request.question.strip():
         return ChatResponse(answer="질문을 입력해 주세요.")
 
     answer = generate_answer(
         request.question,
         persona=request.persona,
-        history=request.history,
     )
     return ChatResponse(answer=answer)
 
@@ -209,8 +207,8 @@ def extract_text_from_response(response: Any) -> str:
     return str(content)
 
 
-def generate_answer(question: str, persona: str, history: list[dict[str, str]]) -> str:
-    prompt = build_chat_prompt(question, persona=persona, history=history)
+def generate_answer(question: str, persona: str) -> str:
+    prompt = build_chat_prompt(question, persona=persona)
 
     api_key = get_api_key()
     if not api_key:

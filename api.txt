@@ -10,7 +10,6 @@ status  string  보통"ok"
 POST / chat - llm과 채팅
 구분    내용
 요청(JSON)  { "persona": 응답 페르소나 }
-요청(JSON)  { "history": 이전에 대화했던 내역 }
 요청(JSON)  { "question": "(사용자 입력) 점심 메뉴는 무엇으로 할까요?" }
 응답(JSON)  { "answer": "..." }
 동작    사용자가 보낸 텍스트에 llm이 대답.
