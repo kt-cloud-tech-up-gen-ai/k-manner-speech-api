@@ -43,7 +43,12 @@ class ApiTestCase(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
 
     def _create_room(self, **overrides):
-        payload = {"user_id": "u1", "persona_id": "doyun", **overrides}
+        payload = {
+            "user_id": "u1",
+            "persona_id": "doyun",
+            "name": "테스트 방",
+            **overrides,
+        }
         return self.client.post("/rooms", json=payload)
 
 
@@ -63,9 +68,10 @@ class CatalogTests(ApiTestCase):
 
 class RoomTests(ApiTestCase):
     def test_create_room_returns_created_room(self):
-        response = self._create_room(scenario_id="interview", title="면접 연습")
+        response = self._create_room(scenario_id="interview", name="면접 연습")
         self.assertEqual(response.status_code, 201)
         body = response.json()
+        self.assertEqual(body["name"], "면접 연습")
         self.assertEqual(body["persona_id"], "doyun")
         self.assertEqual(body["scenario_id"], "interview")
         self.assertTrue(body["id"])
