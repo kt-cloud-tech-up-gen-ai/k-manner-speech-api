@@ -61,6 +61,69 @@ uvicorn app.main:app --reload
 
 ## API
 
+### `GET /web-speech-test`
+
+브라우저 내장 Web Speech API로 한국어 음성을 텍스트로 변환하는
+테스트 화면을 제공합니다. Chrome 또는 Edge에서 접속한 뒤 **마이크 시작**을
+누르고 마이크 권한을 허용하면 됩니다.
+
+```text
+http://127.0.0.1:8000/web-speech-test
+```
+
+- STT 구현: `SpeechRecognition` 또는 `webkitSpeechRecognition`
+- 인식 언어: `ko-KR`
+- K-MANNER 서버는 테스트 HTML만 제공하며 음성이나 전사 결과를 직접 받지 않습니다.
+- Web Speech API의 실제 처리 위치는 브라우저 구현에 따라 다르므로 항상 온디바이스 처리라고 보장되지는 않습니다.
+
+#### STT 텍스트를 Gemini 감정 분석 API로 전달
+
+한 번의 음성 인식 세션이 정상적으로 끝나면 브라우저가 그 세션의 확정 텍스트만
+`GEMINI_EMOTION_TEST`의 아래 API로 전달합니다.
+
+```text
+POST http://127.0.0.1:8001/api/v1/user-input/text
+```
+
+요청 예시:
+
+```json
+{
+  "text": "오늘 정말 기분이 좋아"
+}
+```
+
+응답 예시:
+
+```json
+{
+  "user_text": "오늘 정말 기분이 좋아",
+  "user_emotion": "기쁨",
+  "user_speaking_style": null,
+  "inferred_style": "밝고 긍정적인 표현",
+  "user_intent": "긍정적인 감정 공유",
+  "processing_time_ms": 520.4
+}
+```
+
+응답은 브라우저의 `lastEmotionAnalysis` JavaScript 변수에 저장됩니다.
+이 변수의 `user_emotion`, `inferred_style`, `user_intent` 등을 후속 LLM이나 TTS
+요청에 사용할 수 있습니다. 현재는 후속 모델 자동 전달까지는 구현하지 않았습니다.
+
+두 서버를 다른 포트로 실행합니다.
+
+```bash
+# k-manner-speech-api
+uvicorn app.main:app --reload --port 8000
+
+# GEMINI_EMOTION_TEST
+uvicorn app.main:app --reload --port 8001
+```
+
+> `8000`에서 열린 브라우저 화면이 `8001`로 요청하므로 서로 다른 origin입니다.
+> 실제 브라우저 테스트 전 `GEMINI_EMOTION_TEST` 서버에서
+> `http://127.0.0.1:8000`을 허용하는 CORS 설정이 필요합니다.
+
 ### `GET /health`
 
 서버 상태를 점검합니다.
@@ -125,7 +188,10 @@ app/
 │   ├── config.py           # .env 로딩, CHAT_MODEL 정의
 │   └── state.py            # 전역 상태 딕셔너리 (현재 미사용)
 ├── routers/
-│   └── routers.py          # /health, /chat 엔드포인트 + Gemini 호출
+│   ├── routers.py          # /health, /chat 엔드포인트 + Gemini 호출
+│   └── web_speech.py       # Web Speech STT 테스트 화면 제공
+├── static/
+│   └── web_speech_test.html # 브라우저 STT 테스트 UI
 └── prompts/
     ├── composer.py         # PromptComposer — YAML 로드 및 우선순위 합성
     ├── chat/
