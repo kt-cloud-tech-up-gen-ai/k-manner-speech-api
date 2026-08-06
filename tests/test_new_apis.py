@@ -5,19 +5,24 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.auth import AuthUser, require_user
 from app.core.db import Base, get_db
 from app.main import app as fastapi_app
+
+TEST_USER = AuthUser(id="test-user-1", email="tester@example.com", role="authenticated")
 
 
 def _make_client() -> tuple[TestClient, object]:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    import app.models.chat  # noqa: F401  테이블 등록  (주의: 이름 app 재바인딩)
+    # 주의: 아래 import는 모듈 스코프의 이름 app을 재바인딩한다.
+    import app.models.chat  # noqa: F401  테이블 등록
+    import app.models.user  # noqa: F401  테이블 등록
 
     Base.metadata.create_all(bind=engine)
     TestingSession = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -41,6 +46,14 @@ class ApiTestCase(unittest.TestCase):
         fastapi_app.dependency_overrides.clear()
         self.client.close()
         Base.metadata.drop_all(bind=self.engine)
+
+    def _authenticate(self, user: AuthUser = TEST_USER) -> AuthUser:
+        """인증 의존성을 고정 사용자로 대체한다(Supabase 실호출 방지).
+
+        기본값은 override하지 않으므로, 401 케이스는 이 메서드를 부르지 않으면 된다.
+        """
+        fastapi_app.dependency_overrides[require_user] = lambda: user
+        return user
 
     def _create_room(self, **overrides):
         payload = {"user_id": "u1", "persona_id": "doyun", **overrides}
@@ -204,6 +217,135 @@ class TtsTests(ApiTestCase):
             "/tts", json={"text": "안녕", "persona_id": "nobody"}
         )
         self.assertEqual(response.status_code, 400)
+
+
+class ProfileTests(ApiTestCase):
+    FULL_PROFILE = {
+        "native_language": "ko",
+        "gender": "male",
+        "learning_goals": ["travel", "business"],
+        "study_frequency": "daily",
+        "push_enabled": True,
+    }
+    EMPTY_PROFILE = {
+        "native_language": None,
+        "gender": None,
+        "learning_goals": [],
+        "study_frequency": None,
+        "push_enabled": False,
+    }
+
+    def _count(self, table: str) -> int:
+        with self.engine.connect() as conn:
+            return conn.execute(text(f"select count(*) from {table}")).scalar_one()
+
+    def test_me_without_token_is_401(self):
+        self.assertEqual(self.client.get("/auth/me").status_code, 401)
+
+    def test_put_profile_without_token_is_401(self):
+        response = self.client.put("/auth/me/profile", json=self.FULL_PROFILE)
+        self.assertEqual(response.status_code, 401)
+
+    def test_me_returns_default_profile_without_writing(self):
+        user = self._authenticate()
+
+        response = self.client.get("/auth/me")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["user"]["id"], user.id)
+        self.assertEqual(body["profile"], {**self.EMPTY_PROFILE, "updated_at": None})
+        self.assertEqual(self._count("user_profiles"), 0)
+
+    def test_put_creates_profile_and_me_returns_it(self):
+        self._authenticate()
+
+        response = self.client.put("/auth/me/profile", json=self.FULL_PROFILE)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        # 목적은 저장 순서를 보장하지 않으므로 집합으로 비교한다.
+        self.assertEqual(sorted(body["learning_goals"]), sorted(self.FULL_PROFILE["learning_goals"]))
+        scalars = {key: value for key, value in self.FULL_PROFILE.items() if key != "learning_goals"}
+        self.assertEqual({key: body[key] for key in scalars}, scalars)
+        self.assertIsNotNone(body["updated_at"])
+        self.assertEqual(self.client.get("/auth/me").json()["profile"], body)
+
+    def test_put_replaces_previous_values_entirely(self):
+        self._authenticate()
+        self.client.put("/auth/me/profile", json=self.FULL_PROFILE)
+
+        body = self.client.put("/auth/me/profile", json=self.EMPTY_PROFILE).json()
+
+        self.assertEqual({key: body[key] for key in self.EMPTY_PROFILE}, self.EMPTY_PROFILE)
+        self.assertEqual(self._count("user_learning_goals"), 0)
+        self.assertEqual(self._count("user_profiles"), 1)
+
+    def test_duplicate_learning_goals_are_deduplicated(self):
+        self._authenticate()
+
+        body = self.client.put(
+            "/auth/me/profile",
+            json={**self.FULL_PROFILE, "learning_goals": ["travel", "travel"]},
+        ).json()
+
+        self.assertEqual(body["learning_goals"], ["travel"])
+        self.assertEqual(self._count("user_learning_goals"), 1)
+
+    def test_profiles_are_isolated_per_user(self):
+        self._authenticate()
+        self.client.put("/auth/me/profile", json=self.FULL_PROFILE)
+
+        self._authenticate(AuthUser(id="test-user-2", email="other@example.com"))
+        profile = self.client.get("/auth/me").json()["profile"]
+
+        self.assertEqual(profile["learning_goals"], [])
+        self.assertIsNone(profile["native_language"])
+
+    def test_stored_language_outside_enum_is_returned_as_is(self):
+        """컬럼에 DB 제약이 없어 ko/en 밖의 값이 직접 들어갈 수 있다. 조회가 500이면 안 된다."""
+        self._authenticate()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "insert into user_profiles (user_id, native_language, push_enabled, updated_at)"
+                    " values ('test-user-1', 'en-US', 0, '2026-08-06 00:00:00')"
+                )
+            )
+
+        response = self.client.get("/auth/me")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["profile"]["native_language"], "en-US")
+
+    def test_openapi_exposes_nested_me_schema(self):
+        schema = self.client.get("/openapi.json").json()["components"]["schemas"]["MeResponse"]
+        self.assertEqual(set(schema["properties"]), {"user", "profile"})
+
+    def test_unsupported_native_language_is_422(self):
+        self._authenticate()
+        response = self.client.put(
+            "/auth/me/profile", json={**self.FULL_PROFILE, "native_language": "fr"}
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("native_language", response.text)
+
+    def test_unknown_learning_goal_is_422(self):
+        self._authenticate()
+        response = self.client.put(
+            "/auth/me/profile", json={**self.FULL_PROFILE, "learning_goals": ["cooking"]}
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_missing_field_is_422_and_leaves_data_unchanged(self):
+        self._authenticate()
+        self.client.put("/auth/me/profile", json=self.FULL_PROFILE)
+        partial = {key: value for key, value in self.FULL_PROFILE.items() if key != "push_enabled"}
+
+        response = self.client.put("/auth/me/profile", json=partial)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertTrue(self.client.get("/auth/me").json()["profile"]["push_enabled"])
 
 
 if __name__ == "__main__":
