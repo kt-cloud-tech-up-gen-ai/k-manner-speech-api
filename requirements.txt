@@ -10,3 +10,4 @@ pydantic
 PyYAML
 SQLAlchemy
 psycopg[binary]
+python-multipart

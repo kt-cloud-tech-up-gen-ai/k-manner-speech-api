@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.db import init_db
-from app.routers import catalog, routers, rooms, voice
+from app.routers import auth, catalog, routers, rooms, voice
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="K-MANNER SPEECH", version="0.0.1", lifespan=lifespan)
+app.include_router(auth.router)
 app.include_router(routers.router)
 app.include_router(catalog.router)
 app.include_router(rooms.router)

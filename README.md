@@ -35,6 +35,11 @@ cp .env.example .env
 | --- | --- | --- |
 | `GOOGLE_API_KEY` | 선택 | Gemini API 키. 먼저 확인합니다. |
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
+| `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |
+| `SUPABASE_ANON_KEY` | 인증 사용 시 | 공개용 클라이언트 키. 대시보드의 **Publishable key**(`sb_publishable_...`) 또는 Legacy API keys 탭의 anon 키(`eyJ...`). `SUPABASE_PUBLISHABLE_KEY`라는 이름으로 넣어도 됩니다. `service_role`/Secret 키는 사용 금지. |
+
+`SUPABASE_*`가 비어 있으면 `/auth/login` 등 인증 엔드포인트가 503을 반환합니다
+(나머지 API는 영향 없음). 값은 Supabase Dashboard > Project Settings > API 에서 확인합니다.
 
 두 값 모두 비어 있으면 `/chat`은 LLM을 호출하지 않고
 `"질문에 대한 답변을 준비했습니다. {question}"` 형태의 기본 문구를 반환합니다.
