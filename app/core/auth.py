@@ -152,4 +152,5 @@ def require_user(
 
 
 CurrentUser = Annotated[AuthUser, Depends(require_user)]
-OptionalUser = Annotated[AuthUser | None, Depends(allow_guest)]
+#OptionalUser = Annotated[AuthUser | None, Depends(allow_guest)]
+OptionalUser = Annotated[AuthUser or None, Depends(allow_guest)]
