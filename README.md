@@ -114,6 +114,68 @@ LLM 호출 중 예외가 발생하면 HTTP 500 대신
 > 이 엔드포인트는 **무상태(stateless)** 입니다. 대화 이력을 저장하지 않으며,
 > 매 요청마다 프롬프트를 새로 합성해 단일 메시지로 전송합니다.
 
+### `GET /auth/me`
+
+로그인 사용자의 계정 정보와 온보딩 프로필을 함께 반환합니다. `Authorization: Bearer <access_token>` 필수(없으면 401).
+
+> ⚠️ **변경 (breaking)**: 이전에는 계정 정보만 평평하게 반환했으나, 이제 `user` / `profile` 로 감싼 형태입니다.
+
+프로필을 아직 저장하지 않은 사용자는 기본값이 내려오며, 이 조회는 DB에 아무것도 쓰지 않습니다.
+
+```bash
+curl http://127.0.0.1:8000/auth/me -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "user": { "id": "9f0c...", "email": "me@example.com", "role": "authenticated" },
+  "profile": {
+    "native_language": "ko",
+    "gender": "male",
+    "learning_goals": ["travel", "business"],
+    "study_frequency": "daily",
+    "push_enabled": true,
+    "updated_at": "2026-08-06T11:20:31+00:00"
+  }
+}
+```
+
+프로필이 없을 때의 `profile`: 모든 설정값이 `null`, `learning_goals`는 `[]`, `push_enabled`는 `false`, `updated_at`은 `null`.
+
+### `PUT /auth/me/profile`
+
+온보딩 프로필을 **전체 교체**합니다. 프로필이 없으면 새로 만듭니다. 인증 필수(없으면 401).
+
+**요청** — 다섯 필드를 모두 명시해야 하며(누락 시 422), 값으로 `null`은 허용합니다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `native_language` | `"ko"` \| `"en"` \| null | 모국어 |
+| `gender` | `male` \| `female` \| `other` \| `prefer_not_to_say` \| null | 성별 |
+| `learning_goals` | 배열 (`daily_conversation`, `business`, `travel`, `exam`, `culture`, `other`) | 주요 학습 목적. 기존 선택을 통째로 대체하며, `[]`이면 모두 해제됩니다. 중복 값은 무시됩니다. |
+| `study_frequency` | `daily` \| `five_per_week` \| `three_per_week` \| `twice_per_week` \| `weekly` \| null | 학습 빈도 |
+| `push_enabled` | boolean | 푸시 알림 수신 여부 |
+
+**응답** — 갱신된 프로필 객체(위 `GET /auth/me`의 `profile`과 같은 스키마).
+
+```bash
+curl -X PUT http://127.0.0.1:8000/auth/me/profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"native_language":"ko","gender":"male","learning_goals":["travel","business"],"study_frequency":"daily","push_enabled":true}'
+```
+
+```json
+{
+  "native_language": "ko",
+  "gender": "male",
+  "learning_goals": ["travel", "business"],
+  "study_frequency": "daily",
+  "push_enabled": true,
+  "updated_at": "2026-08-06T11:20:31+00:00"
+}
+```
+
 ---
 
 ## 프로젝트 구조
