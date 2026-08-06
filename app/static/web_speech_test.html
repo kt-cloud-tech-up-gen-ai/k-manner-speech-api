@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web Speech STT Test</title>
+  <style>
+    body { max-width: 760px; margin: 48px auto; padding: 0 20px; font-family: system-ui, sans-serif; color: #172033; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 180px; padding: 16px; font-size: 17px; }
+    button { margin: 14px 8px 14px 0; padding: 10px 18px; cursor: pointer; }
+    #status { color: #526079; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Web Speech STT</h1>
+    <p>브라우저의 Web Speech API로 한국어 음성을 텍스트로 변환합니다.</p>
+    <textarea id="transcript" placeholder="마이크 버튼을 누르고 한국어로 말하세요."></textarea>
+    <div>
+      <button id="startButton" type="button">마이크 시작</button>
+      <button id="stopButton" type="button" disabled>중지</button>
+      <button id="clearButton" type="button">초기화</button>
+    </div>
+    <p id="status">브라우저 지원 여부를 확인하고 있습니다.</p>
+    <p>STT 처리 시간: <strong id="sttTime">-</strong></p>
+  </main>
+  <script>
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const transcriptElement = document.querySelector('#transcript');
+    const startButton = document.querySelector('#startButton');
+    const stopButton = document.querySelector('#stopButton');
+    const statusElement = document.querySelector('#status');
+    const EMOTION_API_URL = 'http://127.0.0.1:8001/api/v1/user-input/text';
+    let recognition = null;
+    let startedAt = null;
+    let finalTranscript = '';
+    let sessionFinalTranscript = '';
+    let lastEmotionAnalysis = null;
+
+    function setListening(isListening) {
+      startButton.disabled = isListening || !SpeechRecognition;
+      stopButton.disabled = !isListening;
+    }
+
+    async function sendTextToEmotionApi(text) {
+      const response = await fetch(EMOTION_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorBody?.detail || `HTTP ${response.status}`);
+      }
+
+      lastEmotionAnalysis = await response.json();
+      return lastEmotionAnalysis;
+    }
+
+    function createRecognition() {
+      const instance = new SpeechRecognition();
+      instance.lang = 'ko-KR';
+      instance.interimResults = true;
+      instance.continuous = false;
+      instance.onstart = () => {
+        startedAt = performance.now();
+        setListening(true);
+        statusElement.textContent = '듣고 있습니다.';
+      };
+      instance.onresult = (event) => {
+        let interimTranscript = '';
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const text = event.results[index][0].transcript;
+          if (event.results[index].isFinal) {
+            finalTranscript += `${text} `;
+            sessionFinalTranscript += `${text} `;
+          }
+          else interimTranscript += text;
+        }
+        transcriptElement.value = `${finalTranscript}${interimTranscript}`.trim();
+      };
+      instance.onerror = (event) => {
+        statusElement.textContent = `음성 인식 오류: ${event.error}`;
+      };
+      instance.onend = async () => {
+        setListening(false);
+        if (startedAt !== null) {
+          document.querySelector('#sttTime').textContent = `${(performance.now() - startedAt).toFixed(0)} ms`;
+        }
+        const recognizedText = sessionFinalTranscript.trim();
+        if (!recognizedText) {
+          statusElement.textContent = '인식된 텍스트가 없습니다.';
+          return;
+        }
+
+        statusElement.textContent = '텍스트를 감정 분석 API로 전달하고 있습니다.';
+        try {
+          const analysis = await sendTextToEmotionApi(recognizedText);
+          statusElement.textContent = `감정 분석 완료: ${analysis.user_emotion}`;
+        } catch (error) {
+          statusElement.textContent = `감정 분석 전달 실패: ${error.message}`;
+        }
+      };
+      return instance;
+    }
+
+    startButton.addEventListener('click', () => {
+      finalTranscript = transcriptElement.value.trim();
+      if (finalTranscript) finalTranscript += ' ';
+      sessionFinalTranscript = '';
+      recognition = createRecognition();
+      recognition.start();
+    });
+    stopButton.addEventListener('click', () => recognition?.stop());
+    document.querySelector('#clearButton').addEventListener('click', () => {
+      transcriptElement.value = '';
+      finalTranscript = '';
+      document.querySelector('#sttTime').textContent = '-';
+    });
+
+    if (SpeechRecognition) statusElement.textContent = '마이크 버튼을 눌러 테스트하세요.';
+    else {
+      startButton.disabled = true;
+      statusElement.textContent = '이 브라우저는 Web Speech API를 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.';
+    }
+  </script>
+</body>
+</html>

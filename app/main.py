@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.db import init_db
-from app.routers import auth, catalog, routers, rooms, voice
+from app.routers import auth, catalog, routers, rooms, voice, web_speech
 
 logger = logging.getLogger(__name__)
 
@@ -28,3 +28,4 @@ app.include_router(routers.router)
 app.include_router(catalog.router)
 app.include_router(rooms.router)
 app.include_router(voice.router)
+app.include_router(web_speech.router)

@@ -206,5 +206,15 @@ class TtsTests(ApiTestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class WebSpeechTests(ApiTestCase):
+    def test_web_speech_test_page_is_served(self):
+        response = self.client.get("/web-speech-test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("SpeechRecognition", response.text)
+        self.assertIn("ko-KR", response.text)
+
+
 if __name__ == "__main__":
     unittest.main()
