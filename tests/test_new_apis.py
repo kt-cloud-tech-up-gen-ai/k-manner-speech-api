@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from tests.catalog_fixtures import seed_catalog
+
 from app.core.auth import AuthUser, require_user
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import Base, get_db
