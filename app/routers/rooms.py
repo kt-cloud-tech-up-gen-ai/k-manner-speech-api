@@ -3,13 +3,23 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
-from app.models.chat import ChatMessage, ChatRoom
+from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.routers.routers import generate_answer
 from app.services import catalog
-from app.services.feedback import generate_feedback
+from app.services.feedback import (
+    FEEDBACK_MESSAGE_LIMIT,
+    FEEDBACK_PROMPT_VERSION,
+    CategoryScores,
+    FeedbackIssue,
+    FeedbackMessage,
+    FeedbackResult,
+    generate_feedback,
+)
 
 router = APIRouter(tags=["rooms"])
 
@@ -64,9 +74,13 @@ class SendMessageResponse(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
-    score: int | None
+    score: int
+    category_scores: CategoryScores
     summary: str
+    strengths: list[str]
     improvements: list[str]
+    issues: list[FeedbackIssue]
+    cached: bool
 
 
 def _get_room_or_404(db: Session, room_id: str) -> ChatRoom:
@@ -187,12 +201,64 @@ def request_feedback(room_id: str, db: Session = Depends(get_db)) -> FeedbackRes
     """채팅방 대화에서 사용자 말투의 예절/매너를 평가한다. (KAN-63)"""
     room = _get_room_or_404(db, room_id)
 
-    messages = [(message.role, message.content) for message in room.messages]
-    if not any(role == "user" for role, _ in messages):
+    if not any(message.role == "user" for message in room.messages):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="피드백할 사용자 발화가 없습니다.",
         )
 
-    result = generate_feedback(messages)
-    return FeedbackResponse(**result)
+    last_message = room.messages[-1]
+    existing = db.scalar(
+        select(ChatFeedback).where(
+            ChatFeedback.room_id == room.id,
+            ChatFeedback.last_message_id == last_message.id,
+            ChatFeedback.model == FEEDBACK_MODEL,
+            ChatFeedback.prompt_version == FEEDBACK_PROMPT_VERSION,
+        )
+    )
+    if existing is not None:
+        result = FeedbackResult.model_validate(existing.result_json)
+        return FeedbackResponse(**result.model_dump(), cached=True)
+
+    messages = [
+        FeedbackMessage(id=message.id, role=message.role, content=message.content)
+        for message in room.messages[-FEEDBACK_MESSAGE_LIMIT:]
+        if message.role in {"user", "assistant"}
+    ]
+    persona = catalog.find_persona(room.persona_id)
+    scenario = catalog.find_scenario(room.scenario_id) if room.scenario_id else None
+    result = generate_feedback(
+        messages,
+        persona=persona.description if persona else room.persona_id,
+        scenario=scenario.description if scenario else room.scenario_id,
+        user_id=room.user_id,
+    )
+
+    feedback = ChatFeedback(
+        room_id=room.id,
+        last_message_id=last_message.id,
+        model=FEEDBACK_MODEL,
+        prompt_version=FEEDBACK_PROMPT_VERSION,
+        score=result.score,
+        result_json=result.model_dump(mode="json"),
+    )
+    db.add(feedback)
+    try:
+        db.commit()
+    except IntegrityError:
+        # 동시에 같은 대화를 평가한 요청이 먼저 저장한 경우 기존 결과를 재사용한다.
+        db.rollback()
+        existing = db.scalar(
+            select(ChatFeedback).where(
+                ChatFeedback.room_id == room.id,
+                ChatFeedback.last_message_id == last_message.id,
+                ChatFeedback.model == FEEDBACK_MODEL,
+                ChatFeedback.prompt_version == FEEDBACK_PROMPT_VERSION,
+            )
+        )
+        if existing is None:
+            raise
+        result = FeedbackResult.model_validate(existing.result_json)
+        return FeedbackResponse(**result.model_dump(), cached=True)
+
+    return FeedbackResponse(**result.model_dump(), cached=False)
