@@ -7,60 +7,15 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import CHAT_MODEL, get_api_key
 from app.prompt_builder.general_chat import build_chat_prompt
+from app.schemas.chat import AskGeminiRequest, ChatRequest, ChatResponse
+from app.schemas.health import HealthResponse
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-class ChatRequest(BaseModel):
-    persona: str
-    question: str
-
-
-class ChatResponse(BaseModel):
-    answer: str
-
-
-class GenerationConfig(BaseModel):
-    """Gemini generateContent의 생성 설정."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    topP: float | None = Field(default=None, ge=0.0, le=1.0)
-    topK: int | None = Field(default=None, ge=1)
-    maxOutputTokens: int | None = Field(default=None, ge=1)
-    candidateCount: int | None = Field(default=None, ge=1)
-    stopSequences: list[str] | None = None
-    responseMimeType: str | None = None
-
-
-class AskGeminiRequest(BaseModel):
-    systemInstruction: str
-    contents: str
-    generationConfig: GenerationConfig | None = None
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "systemInstruction": "당신의 이름은 도윤이고, 대학선배입니다. 한국어로 친절하게 답변하세요.",
-                "contents": "선배님 안녕하세요",
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "maxOutputTokens": 1000,
-                },
-            }
-        }
-    }
-
-
-class HealthResponse(BaseModel):
-    status: str
 
 
 @router.get("/health", response_model=HealthResponse)

@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,12 +9,20 @@ from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.routers.routers import generate_answer
+from app.schemas.rooms import (
+    CreateRoomRequest,
+    FeedbackResponse,
+    MessageListResponse,
+    MessageResponse,
+    RoomListResponse,
+    RoomResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+)
 from app.services import catalog
 from app.services.feedback import (
     FEEDBACK_MESSAGE_LIMIT,
     FEEDBACK_PROMPT_VERSION,
-    CategoryScores,
-    FeedbackIssue,
     FeedbackMessage,
     FeedbackResult,
     generate_feedback,
@@ -29,58 +36,6 @@ HISTORY_LIMIT = 50
 #   조회·전송·피드백이 모두 가능하다. 인증 도입 시 요청자 == room.user_id 검사를 추가할 것.
 # TODO(KAN-47/scale): 채팅방 목록·채팅 내역에 페이지네이션이 없다. 대화가 길어지면
 #   전체 메시지를 한 번에 반환하므로 limit/cursor 파라미터가 필요하다.
-
-
-class CreateRoomRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=128)
-    persona_id: str = Field(min_length=1, max_length=64)
-    scenario_id: str | None = Field(default=None, max_length=64)
-    # TODO(name): 지금은 클라이언트가 반드시 보내야 한다. persona/scenario YAML에 한글
-    #   표시명이 추가되면 "{표시명} M/D HH:MM" 자동 생성으로 바꾸고 선택값으로 되돌릴 것.
-    name: str = Field(min_length=1, max_length=200)
-
-
-class RoomResponse(BaseModel):
-    id: str
-    user_id: str
-    persona_id: str
-    scenario_id: str | None
-    name: str
-    created_at: datetime
-
-
-class RoomListResponse(BaseModel):
-    rooms: list[RoomResponse]
-
-
-class MessageResponse(BaseModel):
-    id: str
-    role: str
-    content: str
-    created_at: datetime
-
-
-class MessageListResponse(BaseModel):
-    messages: list[MessageResponse]
-
-
-class SendMessageRequest(BaseModel):
-    question: str = Field(min_length=1)
-
-
-class SendMessageResponse(BaseModel):
-    answer: str
-    message: MessageResponse
-
-
-class FeedbackResponse(BaseModel):
-    score: int
-    category_scores: CategoryScores
-    summary: str
-    strengths: list[str]
-    improvements: list[str]
-    issues: list[FeedbackIssue]
-    cached: bool
 
 
 def _get_room_or_404(db: Session, room_id: str) -> ChatRoom:

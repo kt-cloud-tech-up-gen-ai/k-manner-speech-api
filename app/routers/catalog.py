@@ -1,28 +1,14 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
 
+from app.schemas.catalog import (
+    PersonaItem,
+    PersonaListResponse,
+    ScenarioItem,
+    ScenarioListResponse,
+)
 from app.services import catalog
 
 router = APIRouter(tags=["catalog"])
-
-
-class PersonaItem(BaseModel):
-    id: str
-    description: str
-    voice_id: str | None = None
-
-
-class PersonaListResponse(BaseModel):
-    personas: list[PersonaItem]
-
-
-class ScenarioItem(BaseModel):
-    id: str
-    description: str
-
-
-class ScenarioListResponse(BaseModel):
-    scenarios: list[ScenarioItem]
 
 
 @router.get("/personas", response_model=PersonaListResponse)
