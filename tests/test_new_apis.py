@@ -119,6 +119,38 @@ class CatalogTests(ApiTestCase):
         ids = [item["id"] for item in response.json()["scenarios"]]
         self.assertIn("interview", ids)
 
+    def test_list_responses_omit_prompt_internals(self):
+        """목록은 고르는 데 필요한 값만 준다. 프롬프트 내부 값은 단건에서."""
+        persona = self.client.get("/personas").json()["personas"][0]
+        self.assertNotIn("relationship_description", persona)
+        self.assertNotIn("voice_id", persona)
+
+        scenario = self.client.get("/scenarios").json()["scenarios"][0]
+        for field in ("communication_goal", "end_condition", "max_turns"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, scenario)
+
+    def test_persona_detail_includes_relationship_and_voice(self):
+        response = self.client.get("/personas/doyun")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], "doyun")
+        self.assertTrue(body["relationship_description"])
+        self.assertIn("voice_id", body)
+        self.assertIn("version", body)
+
+    def test_scenario_detail_includes_progress_rules(self):
+        response = self.client.get("/scenarios/interview")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["communication_goal"])
+        self.assertTrue(body["end_condition"])
+        self.assertEqual(body["max_turns"], 20)
+
+    def test_unknown_catalog_id_returns_404(self):
+        self.assertEqual(self.client.get("/personas/ghost").status_code, 404)
+        self.assertEqual(self.client.get("/scenarios/ghost").status_code, 404)
+
 
 class RoomTests(ApiTestCase):
     def test_create_room_returns_created_room(self):
