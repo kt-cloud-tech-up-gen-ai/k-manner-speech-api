@@ -56,17 +56,16 @@ pytest
 고정 세트는 추측이 아니라 실제 설치로 확인했습니다.
 
 1. Python 3.14.3 클린 venv에서 `pip install -r requirements.txt` 의존성 충돌 없이 resolve.
-2. `pytest` 실행 결과 **87 passed / 49 subtests passed**.
-3. 잔여 실패 2건은 의존성 버전과 무관한 기존 이슈입니다.
+2. `pytest` 실행 결과 **88 passed / 49 subtests passed**.
+3. 잔여 실패 1건은 의존성 버전과 무관한 기존 이슈입니다.
    - `test_chat_prompt_spec` — `app/prompts/personas/friendly.yaml` 파일 부재
-   - `test_migrations` — 모델과 마이그레이션 head 간 check constraint 드리프트
 
 ### 변경 내역과 근거
 
 | 항목 | 조치 | 사유 |
 | --- | --- | --- |
 | 전체 15개 패키지 | 버전 미지정 → `==` 고정 | 재현 가능한 빌드. 위 "왜 고정했나" 참조 |
-| `langchain-core==1.5.3` | **신규 추가** | `app/services/llm.py:21`, `app/routers/routers.py:222`가 `langchain_core.messages`를 **직접 import** 하는데 선언이 없었음. `langchain-google-genai`의 전이 의존에 우연히 기대던 상태 — 상위 패키지가 의존성을 바꾸면 즉시 `ImportError` |
+| `langchain-core==1.5.3` | **신규 추가** | `app/services/llm.py`, `app/services/gemini.py`가 `langchain_core.messages`를 **직접 import** 하는데 선언이 없었음. `langchain-google-genai`의 전이 의존에 우연히 기대던 상태 — 상위 패키지가 의존성을 바꾸면 즉시 `ImportError` |
 | `httpx==0.28.1`, `pytest==9.1.1` | **`requirements-dev.txt` 신규** | `tests/test_new_apis.py`가 `fastapi.testclient.TestClient`를 쓰고 이는 `httpx`를 요구하나 어디에도 선언이 없어, 클린 환경에서 테스트가 실행 불가였음 |
 | `langchain`, `langchain-community`, `langchain-huggingface`, `langchain-text-splitters` | 고정하되 **제거 후보로 표시** | `app/`·`tests/` 전체 grep 결과 import 0건. 실제로 쓰이는 것은 `langchain-google-genai`와 `langchain-core` 뿐. 4개를 빼면 설치 패키지가 **84개 → 57개**로 줄어듦(langgraph·numpy·tokenizers·huggingface_hub·aiohttp 등이 딸려옴) |
 | `python-multipart` | 고정하되 제거 후보로 표시 | `UploadFile`/`Form`을 쓰는 엔드포인트가 없음 |
@@ -281,21 +280,40 @@ curl -X PUT http://127.0.0.1:8000/auth/me/profile \
 
 ## 프로젝트 구조
 
+계층(타입)별로 나눈다. 각 디렉터리가 "무엇인가"가 아니라 "어떤 역할인가"로 묶인다.
+
 ```
 app/
 ├── main.py                 # FastAPI 앱 생성 및 라우터 등록
-├── core/
+├── core/                   # 앱 전역 인프라 (도메인 로직 없음)
 │   ├── config.py           # .env 로딩, 채팅/피드백 모델 정의
-│   └── db.py               # SQLAlchemy 엔진과 세션
-├── models/
-│   └── chat.py             # 채팅방·메시지·피드백 모델
-├── services/
-│   ├── llm.py              # Gemini 채팅 호출
+│   ├── db.py               # SQLAlchemy 엔진과 세션
+│   └── auth.py             # Supabase Auth 연동, 인증 의존성
+├── models/                 # SQLAlchemy 엔티티 (= DB 테이블의 모양)
+│   ├── user.py             # 사용자 프로필·학습 목적
+│   ├── chat.py             # 채팅방·메시지·피드백
+│   └── catalog.py          # persona·scenario
+├── schemas/                # Pydantic DTO (= API 계약의 모양)
+│   ├── auth.py             # 라우터와 1:1 대응
+│   ├── chat.py
+│   ├── health.py
+│   ├── rooms.py
+│   ├── catalog.py
+│   └── voice.py
+├── routers/                # HTTP 엔드포인트만. 로직은 services에 위임
+│   ├── health.py           # GET /health
+│   ├── chat.py             # POST /chat, /ask_gemini
+│   ├── auth.py             # POST /auth/login, GET/PUT /auth/me*
+│   ├── rooms.py            # 채팅방·메시지·피드백 API
+│   ├── catalog.py          # GET /personas, /scenarios
+│   └── voice.py            # POST /tts
+├── services/               # 도메인 로직·외부 API 호출
+│   ├── llm.py              # LangChain 경유 채팅 (프롬프트 조합 적용)
+│   ├── gemini.py           # Gemini REST 직접 호출 (/ask_gemini 전용)
+│   ├── feedback.py         # Luna Structured Outputs 표현 평가
 │   ├── openai_client.py    # OpenAI 클라이언트 생성
-│   └── feedback.py         # Luna Structured Outputs 표현 평가
-├── routers/
-│   ├── routers.py          # /health, /chat, /ask_gemini
-│   └── rooms.py            # 채팅방·메시지·피드백 API
+│   ├── catalog.py          # persona/scenario YAML 조회
+│   └── tts.py              # ElevenLabs 음성 합성
 ├── prompt_builder/
 │   ├── composer.py         # PromptComposer
 │   └── general_chat.py     # 일반 채팅 프롬프트 조합
@@ -307,6 +325,42 @@ app/
     ├── tasks/              # 작업 (explain, summarize, translate)
     └── modes/              # 모드 (interview, roleplay)
 ```
+
+### 의존 방향
+
+```
+routers  ->  services  ->  core
+   |            |
+   +----> schemas <-------- models (enum 재사용)
+```
+
+**routers는 services를 import하지만 그 반대는 없다.** 이 방향이 뒤집히면
+라우터 파일 하나를 고칠 때 서비스 계층이 함께 흔들린다.
+
+### models와 schemas를 왜 나누나
+
+`models/`는 DB 테이블의 모양, `schemas/`는 API 계약의 모양이다. 둘은 서로 다른
+속도로 변한다. 컬럼을 추가해도 응답에 노출할지는 별개 결정이고, 반대로 응답 형태를
+바꾸는 데 마이그레이션이 필요하지도 않다. 라우터는 `_to_room_response()` 같은
+명시적 변환 함수로 둘을 잇는다 — 어떤 필드가 밖으로 나가는지 코드에 그대로 보인다.
+
+### 왜 도메인별(`app/domains/<feature>/`)이 아닌가
+
+도메인 수직 슬라이스를 권하는 [fastapi-best-practices](https://github.com/zhanymkanov/fastapi-best-practices)의
+README 자체가 그 전제를 밝힌다 — 타입별 구조는 "마이크로서비스나 소규모 프로젝트에
+잘 맞고, 도메인이 많은 모놀리스에서 깨진다". 이 프로젝트는 약 2,000 LOC에 라우터
+6개다. FastAPI 공식 문서의 [Bigger Applications](https://fastapi.tiangolo.com/tutorial/bigger-applications/)와
+공식 템플릿([full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template))도
+모두 타입별 레이어를 쓴다.
+
+도메인이 늘어 라우터 파일 하나를 고칠 때 다른 도메인 파일을 계속 함께 열게 되면
+그때 전환을 검토한다. 전환 임계치를 수치로 제시한 출처는 없다.
+
+### DTO 네이밍 규칙
+
+`app/schemas/__init__.py`의 모듈 docstring에 정리해 두었다. 요약하면
+`<리소스><동작?>Request/Response`이며, 리소스 이름은 대응하는 도메인 모델과 맞춘다
+(`ChatMessage` → `ChatMessageResponse`).
 
 ---
 
