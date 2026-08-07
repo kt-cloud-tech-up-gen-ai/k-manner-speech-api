@@ -1,7 +1,7 @@
 """Supabase Auth 연동.
 
 의존성 추가 없이 표준 라이브러리(urllib)로 Supabase Auth REST를 호출한다
-(app/routers/routers.py의 Gemini 호출과 같은 방식).
+(app/services/gemini.py의 Gemini 호출과 같은 방식).
 
 토큰 검증은 매 요청마다 Supabase `GET /auth/v1/user`를 호출한다.
 TODO(auth): 요청당 왕복 1회가 부담되면 JWKS 기반 로컬 JWT 검증으로 교체할 것.
