@@ -25,7 +25,9 @@ class CreateRoomRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     persona_id: str = Field(min_length=1, max_length=64)
     scenario_id: str | None = Field(default=None, max_length=64)
-    title: str | None = Field(default=None, max_length=200)
+    # TODO(name): 지금은 클라이언트가 반드시 보내야 한다. persona/scenario YAML에 한글
+    #   표시명이 추가되면 "{표시명} M/D HH:MM" 자동 생성으로 바꾸고 선택값으로 되돌릴 것.
+    name: str = Field(min_length=1, max_length=200)
 
 
 class RoomResponse(BaseModel):
@@ -33,7 +35,7 @@ class RoomResponse(BaseModel):
     user_id: str
     persona_id: str
     scenario_id: str | None
-    title: str | None
+    name: str
     created_at: datetime
 
 
@@ -82,7 +84,7 @@ def _to_room_response(room: ChatRoom) -> RoomResponse:
         user_id=room.user_id,
         persona_id=room.persona_id,
         scenario_id=room.scenario_id,
-        title=room.title,
+        name=room.name,
         created_at=room.created_at,
     )
 
@@ -114,7 +116,7 @@ def create_room(request: CreateRoomRequest, db: Session = Depends(get_db)) -> Ro
         user_id=request.user_id,
         persona_id=request.persona_id,
         scenario_id=request.scenario_id,
-        title=request.title,
+        name=request.name,
     )
     db.add(room)
     db.commit()
