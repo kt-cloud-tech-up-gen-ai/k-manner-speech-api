@@ -14,7 +14,7 @@ YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능�
 
 ## 요구사항
 
-- Python 3.10 이상 (`str | Path` 문법 사용)
+- Python 3.10 이상 (`str | Path` 문법 사용). 3.14.3에서 전체 의존성 설치·테스트 검증 완료.
 - Google Gemini API 키 (선택 — 미설정 시 LLM 호출 없이 기본 문구를 반환)
 - OpenAI API 키 (`/rooms/{room_id}/feedback` 사용 시 필요)
 
@@ -25,6 +25,64 @@ python3 -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+테스트를 돌리려면 개발용 의존성도 함께 설치합니다.
+
+```bash
+pip install -r requirements-dev.txt   # requirements.txt를 포함합니다
+pytest
+```
+
+## 의존성 버전 정책
+
+`requirements.txt`와 `requirements-dev.txt`는 **모든 패키지를 `==`로 고정**합니다.
+고정 시점은 **2026-08-07**이며, 각 패키지의 당시 PyPI 최신 릴리스를 채택했습니다.
+
+### 왜 고정했나
+
+이전 `requirements.txt`는 버전 제약이 전혀 없어(`fastapi`, `langchain`, …) 설치 시점마다
+서로 다른 조합이 깔렸습니다. 이 프로젝트에서 이는 이론적인 위험이 아니라 실제 위험입니다.
+
+- **LangChain 생태계가 0.3 → 1.x 메이저 전환을 겪었습니다.** 제약 없는 `langchain`은
+  전환 전후 어느 쪽이든 설치될 수 있어, 같은 커밋이 환경에 따라 다르게 동작합니다.
+- **`pydantic`은 v1/v2 호환성 경계가 있고**, FastAPI ≥ 0.102.0 + Pydantic v2 조합에서는
+  같은 모델이라도 요청/응답 OpenAPI 스키마가 분리 생성됩니다
+  ([공식 문서](https://fastapi.tiangolo.com/how-to/separate-openapi-schemas/)).
+  버전이 흔들리면 API 문서 계약 자체가 흔들립니다.
+- **`SQLAlchemy` 2.x + Alembic**은 마이그레이션 autogenerate 결과가 버전에 민감합니다.
+
+### 검증 방법
+
+고정 세트는 추측이 아니라 실제 설치로 확인했습니다.
+
+1. Python 3.14.3 클린 venv에서 `pip install -r requirements.txt` 의존성 충돌 없이 resolve.
+2. `pytest` 실행 결과 **88 passed / 49 subtests passed**.
+3. 잔여 실패 1건은 의존성 버전과 무관한 기존 이슈입니다.
+   - `test_chat_prompt_spec` — `app/prompts/personas/friendly.yaml` 파일 부재
+
+### 변경 내역과 근거
+
+| 항목 | 조치 | 사유 |
+| --- | --- | --- |
+| 전체 15개 패키지 | 버전 미지정 → `==` 고정 | 재현 가능한 빌드. 위 "왜 고정했나" 참조 |
+| `langchain-core==1.5.3` | **신규 추가** | `app/services/llm.py`, `app/services/gemini.py`가 `langchain_core.messages`를 **직접 import** 하는데 선언이 없었음. `langchain-google-genai`의 전이 의존에 우연히 기대던 상태 — 상위 패키지가 의존성을 바꾸면 즉시 `ImportError` |
+| `httpx==0.28.1`, `pytest==9.1.1` | **`requirements-dev.txt` 신규** | `tests/test_new_apis.py`가 `fastapi.testclient.TestClient`를 쓰고 이는 `httpx`를 요구하나 어디에도 선언이 없어, 클린 환경에서 테스트가 실행 불가였음 |
+| `langchain`, `langchain-community`, `langchain-huggingface`, `langchain-text-splitters` | 고정하되 **제거 후보로 표시** | `app/`·`tests/` 전체 grep 결과 import 0건. 실제로 쓰이는 것은 `langchain-google-genai`와 `langchain-core` 뿐. 4개를 빼면 설치 패키지가 **84개 → 57개**로 줄어듦(langgraph·numpy·tokenizers·huggingface_hub·aiohttp 등이 딸려옴) |
+| `python-multipart` | 고정하되 제거 후보로 표시 | `UploadFile`/`Form`을 쓰는 엔드포인트가 없음 |
+
+> 제거 후보 5개는 **아직 지우지 않았습니다.** 향후 파일 업로드나 RAG(text-splitters,
+> huggingface 임베딩) 도입 계획이 있다면 남겨두는 편이 낫고, 없다면 삭제해 설치 표면을
+> 줄이는 것을 권합니다. 판단이 필요한 사안이라 이번 변경에서는 사실만 기록했습니다.
+
+### 갱신 방법
+
+```bash
+# 최신 버전 확인
+curl -s https://pypi.org/pypi/<package>/json | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"
+```
+
+버전을 올린 뒤에는 반드시 **클린 venv 설치 + `pytest`**로 회귀를 확인하고,
+이 표의 "고정 시점"을 갱신합니다.
 
 ## 환경변수
 
@@ -222,21 +280,40 @@ curl -X PUT http://127.0.0.1:8000/auth/me/profile \
 
 ## 프로젝트 구조
 
+계층(타입)별로 나눈다. 각 디렉터리가 "무엇인가"가 아니라 "어떤 역할인가"로 묶인다.
+
 ```
 app/
 ├── main.py                 # FastAPI 앱 생성 및 라우터 등록
-├── core/
+├── core/                   # 앱 전역 인프라 (도메인 로직 없음)
 │   ├── config.py           # .env 로딩, 채팅/피드백 모델 정의
-│   └── db.py               # SQLAlchemy 엔진과 세션
-├── models/
-│   └── chat.py             # 채팅방·메시지·피드백 모델
-├── services/
-│   ├── llm.py              # Gemini 채팅 호출
+│   ├── db.py               # SQLAlchemy 엔진과 세션
+│   └── auth.py             # Supabase Auth 연동, 인증 의존성
+├── models/                 # SQLAlchemy 엔티티 (= DB 테이블의 모양)
+│   ├── user.py             # 사용자 프로필·학습 목적
+│   ├── chat.py             # 채팅방·메시지·피드백
+│   └── catalog.py          # persona·scenario
+├── schemas/                # Pydantic DTO (= API 계약의 모양)
+│   ├── auth.py             # 라우터와 1:1 대응
+│   ├── chat.py
+│   ├── health.py
+│   ├── rooms.py
+│   ├── catalog.py
+│   └── voice.py
+├── routers/                # HTTP 엔드포인트만. 로직은 services에 위임
+│   ├── health.py           # GET /health
+│   ├── chat.py             # POST /chat, /ask_gemini
+│   ├── auth.py             # POST /auth/login, GET/PUT /auth/me*
+│   ├── rooms.py            # 채팅방·메시지·피드백 API
+│   ├── catalog.py          # GET /personas, /scenarios
+│   └── voice.py            # POST /tts
+├── services/               # 도메인 로직·외부 API 호출
+│   ├── llm.py              # LangChain 경유 채팅 (프롬프트 조합 적용)
+│   ├── gemini.py           # Gemini REST 직접 호출 (/ask_gemini 전용)
+│   ├── feedback.py         # Luna Structured Outputs 표현 평가
 │   ├── openai_client.py    # OpenAI 클라이언트 생성
-│   └── feedback.py         # Luna Structured Outputs 표현 평가
-├── routers/
-│   ├── routers.py          # /health, /chat, /ask_gemini
-│   └── rooms.py            # 채팅방·메시지·피드백 API
+│   ├── catalog.py          # persona/scenario YAML 조회
+│   └── tts.py              # ElevenLabs 음성 합성
 ├── prompt_builder/
 │   ├── composer.py         # PromptComposer
 │   └── general_chat.py     # 일반 채팅 프롬프트 조합
@@ -248,6 +325,42 @@ app/
     ├── tasks/              # 작업 (explain, summarize, translate)
     └── modes/              # 모드 (interview, roleplay)
 ```
+
+### 의존 방향
+
+```
+routers  ->  services  ->  core
+   |            |
+   +----> schemas <-------- models (enum 재사용)
+```
+
+**routers는 services를 import하지만 그 반대는 없다.** 이 방향이 뒤집히면
+라우터 파일 하나를 고칠 때 서비스 계층이 함께 흔들린다.
+
+### models와 schemas를 왜 나누나
+
+`models/`는 DB 테이블의 모양, `schemas/`는 API 계약의 모양이다. 둘은 서로 다른
+속도로 변한다. 컬럼을 추가해도 응답에 노출할지는 별개 결정이고, 반대로 응답 형태를
+바꾸는 데 마이그레이션이 필요하지도 않다. 라우터는 `_to_room_response()` 같은
+명시적 변환 함수로 둘을 잇는다 — 어떤 필드가 밖으로 나가는지 코드에 그대로 보인다.
+
+### 왜 도메인별(`app/domains/<feature>/`)이 아닌가
+
+도메인 수직 슬라이스를 권하는 [fastapi-best-practices](https://github.com/zhanymkanov/fastapi-best-practices)의
+README 자체가 그 전제를 밝힌다 — 타입별 구조는 "마이크로서비스나 소규모 프로젝트에
+잘 맞고, 도메인이 많은 모놀리스에서 깨진다". 이 프로젝트는 약 2,000 LOC에 라우터
+6개다. FastAPI 공식 문서의 [Bigger Applications](https://fastapi.tiangolo.com/tutorial/bigger-applications/)와
+공식 템플릿([full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template))도
+모두 타입별 레이어를 쓴다.
+
+도메인이 늘어 라우터 파일 하나를 고칠 때 다른 도메인 파일을 계속 함께 열게 되면
+그때 전환을 검토한다. 전환 임계치를 수치로 제시한 출처는 없다.
+
+### DTO 네이밍 규칙
+
+`app/schemas/__init__.py`의 모듈 docstring에 정리해 두었다. 요약하면
+`<리소스><동작?>Request/Response`이며, 리소스 이름은 대응하는 도메인 모델과 맞춘다
+(`ChatMessage` → `ChatMessageResponse`).
 
 ---
 

@@ -1,34 +1,22 @@
-from datetime import datetime
-from enum import Enum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.auth import AuthUser, CurrentUser, sign_in_with_password
+from app.core.auth import CurrentUser, sign_in_with_password
 from app.core.db import get_db
-from app.models.user import (
-    Gender,
-    LearningGoal,
-    StudyFrequency,
-    UserLearningGoal,
-    UserProfile,
+from app.models.user import UserLearningGoal, UserProfile
+from app.schemas.auth import (
+    AuthUser,
+    LoginResponse,
+    MeResponse,
+    ProfileResponse,
+    ProfileUpdateRequest,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-class LoginResponse(BaseModel):
-    """Swagger Authorize 및 일반 클라이언트가 함께 쓰는 로그인 응답."""
-
-    access_token: str
-    token_type: str = "bearer"
-    refresh_token: str | None = None
-    expires_in: int | None = None
-    user: AuthUser | None = None
 
 
 @router.post("/login", response_model=LoginResponse, summary="이메일/비밀번호 로그인")
@@ -49,47 +37,6 @@ def login(form: Annotated[OAuth2PasswordRequestForm, Depends()]) -> LoginRespons
         if user.get("id")
         else None,
     )
-
-
-class NativeLanguage(str, Enum):
-    """모국어. 현재 서비스가 지원하는 값만 허용한다.
-
-    DB 컬럼(user_profiles.native_language)은 varchar 그대로이며 제약을 추가하지 않았다.
-    지원 언어가 늘어나면 여기에 값을 추가하면 된다.
-    """
-
-    KO = "ko"
-    EN = "en"
-
-
-class ProfileResponse(BaseModel):
-    """온보딩 설정. 프로필 행이 없으면 모든 값이 비어 있는 기본값으로 응답한다."""
-
-    # 쓰기는 NativeLanguage(ko/en)로 제한하지만, 읽기는 str로 열어둔다.
-    # 컬럼에 DB 제약이 없어 다른 값(예: "en-US")이 직접 들어갈 수 있고,
-    # 그때 조회가 500으로 죽는 것보다 저장된 값을 그대로 돌려주는 편이 낫다.
-    native_language: str | None = None
-    gender: Gender | None = None
-    learning_goals: list[LearningGoal] = []
-    study_frequency: StudyFrequency | None = None
-    push_enabled: bool = False
-    # 프로필 행이 아직 없으면 null.
-    updated_at: datetime | None = None
-
-
-class MeResponse(BaseModel):
-    user: AuthUser
-    profile: ProfileResponse
-
-
-class ProfileUpdateRequest(BaseModel):
-    """전체 교체(PUT). 다섯 필드를 모두 명시해야 하며, 값으로 null은 허용한다."""
-
-    native_language: NativeLanguage | None = Field(...)
-    gender: Gender | None = Field(...)
-    learning_goals: list[LearningGoal] = Field(...)
-    study_frequency: StudyFrequency | None = Field(...)
-    push_enabled: bool = Field(...)
 
 
 EMPTY_PROFILE = ProfileResponse()

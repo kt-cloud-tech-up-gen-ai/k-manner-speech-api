@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
+# chat_rooms가 personas/scenarios를 FK로 참조하므로, 이 모듈만 임포트해도
+# 참조 대상 테이블이 메타데이터에 등록되어 있어야 한다.
+from app.models import catalog  # noqa: F401
+
 
 def _new_id() -> str:
     return uuid.uuid4().hex
@@ -24,9 +28,15 @@ class ChatRoom(Base):
     __tablename__ = "chat_rooms"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    # Supabase auth.users.id. 스키마 소유가 달라 FK는 걸지 않는다(논리 참조).
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    persona_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    scenario_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 카탈로그 행이 사라지면 이 방의 프롬프트를 재구성할 수 없으므로 RESTRICT.
+    persona_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("personas.id", ondelete="RESTRICT"), nullable=False
+    )
+    scenario_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("scenarios.id", ondelete="RESTRICT"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False

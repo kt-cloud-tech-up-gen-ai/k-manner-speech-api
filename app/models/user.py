@@ -11,33 +11,14 @@ PK는 Supabase user id(= AuthUser.id)이며 FK는 걸지 않는다(스키마/인
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.db import Base
+from app.core.db import Base, enum_column as _enum_column
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _enum_column(enum_type: type[Enum], constraint_name: str) -> SAEnum:
-    """Enum을 VARCHAR + CHECK 제약으로 매핑한다.
-
-    - native_enum=False: DB 네이티브 enum 타입을 만들지 않는다.
-      PostgreSQL 네이티브 enum은 값 추가에 ALTER TYPE이 필요해 마이그레이션이 번거롭다.
-    - name: native_enum=False에서는 CHECK 제약 이름이 된다.
-    - values_callable: 저장 문자열을 멤버 이름(MALE)이 아니라 값(male)으로 고정한다.
-      이 값이 그대로 API 요청/응답에 쓰인다.
-    """
-    return SAEnum(
-        enum_type,
-        name=constraint_name,
-        native_enum=False,
-        create_constraint=True,
-        length=32,
-        values_callable=lambda enum: [member.value for member in enum],
-    )
 
 
 class Gender(str, Enum):

@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -9,13 +8,21 @@ from sqlalchemy.orm import Session
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
-from app.routers.routers import generate_answer
+from app.schemas.rooms import (
+    CreateRoomRequest,
+    FeedbackResponse,
+    ChatMessageListResponse,
+    ChatMessageResponse,
+    RoomListResponse,
+    RoomResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+)
 from app.services import catalog
+from app.services.llm import generate_answer
 from app.services.feedback import (
     FEEDBACK_MESSAGE_LIMIT,
     FEEDBACK_PROMPT_VERSION,
-    CategoryScores,
-    FeedbackIssue,
     FeedbackMessage,
     FeedbackResult,
     generate_feedback,
@@ -29,58 +36,6 @@ HISTORY_LIMIT = 50
 #   조회·전송·피드백이 모두 가능하다. 인증 도입 시 요청자 == room.user_id 검사를 추가할 것.
 # TODO(KAN-47/scale): 채팅방 목록·채팅 내역에 페이지네이션이 없다. 대화가 길어지면
 #   전체 메시지를 한 번에 반환하므로 limit/cursor 파라미터가 필요하다.
-
-
-class CreateRoomRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=128)
-    persona_id: str = Field(min_length=1, max_length=64)
-    scenario_id: str | None = Field(default=None, max_length=64)
-    # TODO(name): 지금은 클라이언트가 반드시 보내야 한다. persona/scenario YAML에 한글
-    #   표시명이 추가되면 "{표시명} M/D HH:MM" 자동 생성으로 바꾸고 선택값으로 되돌릴 것.
-    name: str = Field(min_length=1, max_length=200)
-
-
-class RoomResponse(BaseModel):
-    id: str
-    user_id: str
-    persona_id: str
-    scenario_id: str | None
-    name: str
-    created_at: datetime
-
-
-class RoomListResponse(BaseModel):
-    rooms: list[RoomResponse]
-
-
-class MessageResponse(BaseModel):
-    id: str
-    role: str
-    content: str
-    created_at: datetime
-
-
-class MessageListResponse(BaseModel):
-    messages: list[MessageResponse]
-
-
-class SendMessageRequest(BaseModel):
-    question: str = Field(min_length=1)
-
-
-class SendMessageResponse(BaseModel):
-    answer: str
-    message: MessageResponse
-
-
-class FeedbackResponse(BaseModel):
-    score: int
-    category_scores: CategoryScores
-    summary: str
-    strengths: list[str]
-    improvements: list[str]
-    issues: list[FeedbackIssue]
-    cached: bool
 
 
 def _get_room_or_404(db: Session, room_id: str) -> ChatRoom:
@@ -103,8 +58,8 @@ def _to_room_response(room: ChatRoom) -> RoomResponse:
     )
 
 
-def _to_message_response(message: ChatMessage) -> MessageResponse:
-    return MessageResponse(
+def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
+    return ChatMessageResponse(
         id=message.id,
         role=message.role,
         content=message.content,
@@ -115,12 +70,12 @@ def _to_message_response(message: ChatMessage) -> MessageResponse:
 @router.post("/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(request: CreateRoomRequest, db: Session = Depends(get_db)) -> RoomResponse:
     """채팅방을 생성한다. (KAN-60)"""
-    if catalog.find_persona(request.persona_id) is None:
+    if catalog.find_persona(db, request.persona_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"알 수 없는 persona입니다: {request.persona_id}",
         )
-    if request.scenario_id and catalog.find_scenario(request.scenario_id) is None:
+    if request.scenario_id and catalog.find_scenario(db, request.scenario_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"알 수 없는 시나리오입니다: {request.scenario_id}",
@@ -150,11 +105,11 @@ def list_rooms(
     return RoomListResponse(rooms=[_to_room_response(room) for room in rooms])
 
 
-@router.get("/rooms/{room_id}/messages", response_model=MessageListResponse)
-def list_messages(room_id: str, db: Session = Depends(get_db)) -> MessageListResponse:
+@router.get("/rooms/{room_id}/messages", response_model=ChatMessageListResponse)
+def list_messages(room_id: str, db: Session = Depends(get_db)) -> ChatMessageListResponse:
     """채팅방의 채팅 내역을 오래된 순으로 반환한다. (KAN-62)"""
     room = _get_room_or_404(db, room_id)
-    return MessageListResponse(
+    return ChatMessageListResponse(
         messages=[_to_message_response(message) for message in room.messages]
     )
 
@@ -225,8 +180,8 @@ def request_feedback(room_id: str, db: Session = Depends(get_db)) -> FeedbackRes
         for message in room.messages[-FEEDBACK_MESSAGE_LIMIT:]
         if message.role in {"user", "assistant"}
     ]
-    persona = catalog.find_persona(room.persona_id)
-    scenario = catalog.find_scenario(room.scenario_id) if room.scenario_id else None
+    persona = catalog.find_persona(db, room.persona_id)
+    scenario = catalog.find_scenario(db, room.scenario_id) if room.scenario_id else None
     result = generate_feedback(
         messages,
         persona=persona.description if persona else room.persona_id,

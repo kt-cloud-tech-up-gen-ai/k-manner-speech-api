@@ -1,7 +1,7 @@
 """Supabase Auth 연동.
 
 의존성 추가 없이 표준 라이브러리(urllib)로 Supabase Auth REST를 호출한다
-(app/routers/routers.py의 Gemini 호출과 같은 방식).
+(app/services/gemini.py의 Gemini 호출과 같은 방식).
 
 토큰 검증은 매 요청마다 Supabase `GET /auth/v1/user`를 호출한다.
 TODO(auth): 요청당 왕복 1회가 부담되면 JWKS 기반 로컬 JWT 검증으로 교체할 것.
@@ -17,7 +17,8 @@ from urllib.request import urlopen
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+
+from app.schemas.auth import AuthUser
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,6 @@ TIMEOUT_SECONDS = 10
 
 # auto_error=False: 게스트 허용 엔드포인트에서 토큰이 없어도 401을 내지 않게 한다.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-
-
-class AuthUser(BaseModel):
-    """인증된 사용자(= Supabase auth.users)."""
-
-    id: str
-    email: str | None = None
-    role: str | None = None
 
 
 def get_supabase_url() -> str:
