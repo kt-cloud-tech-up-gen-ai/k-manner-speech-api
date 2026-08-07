@@ -79,23 +79,49 @@ class CatalogQueryTests(unittest.TestCase):
             self.assertIsNone(catalog.find_persona(session, "ghost"))
             self.assertIsNone(catalog.find_scenario(session, "ghost"))
 
-    def test_persona_carries_every_field_the_dto_exposes(self):
+    def test_entities_satisfy_both_summary_and_detail_dtos(self):
         """DTO가 요구하는 값이 DB에서 그대로 나와야 한다."""
-        from app.schemas.catalog import PersonaItem, ScenarioItem
+        from app.schemas.catalog import (
+            PersonaResponse,
+            PersonaSummaryResponse,
+            ScenarioResponse,
+            ScenarioSummaryResponse,
+        )
 
         with self.Session() as session:
             persona = catalog.find_persona(session, "doyun")
             scenario = catalog.find_scenario(session, "interview")
 
-            item = PersonaItem.model_validate(persona, from_attributes=True)
-            self.assertEqual(item.id, "doyun")
-            self.assertEqual(item.age, 22)
-            self.assertTrue(item.relationship_description)
+            summary = PersonaSummaryResponse.model_validate(persona, from_attributes=True)
+            self.assertEqual(summary.id, "doyun")
+            self.assertEqual(summary.age, 22)
 
-            scenario_item = ScenarioItem.model_validate(scenario, from_attributes=True)
-            self.assertEqual(scenario_item.max_turns, 20)
-            self.assertTrue(scenario_item.communication_goal)
-            self.assertTrue(scenario_item.end_condition)
+            detail = PersonaResponse.model_validate(persona, from_attributes=True)
+            self.assertTrue(detail.relationship_description)
+            self.assertIsNotNone(detail.version)
+
+            scenario_summary = ScenarioSummaryResponse.model_validate(
+                scenario, from_attributes=True
+            )
+            self.assertEqual(scenario_summary.place_context, "회사 회의실")
+
+            scenario_detail = ScenarioResponse.model_validate(
+                scenario, from_attributes=True
+            )
+            self.assertEqual(scenario_detail.max_turns, 20)
+            self.assertTrue(scenario_detail.communication_goal)
+            self.assertTrue(scenario_detail.end_condition)
+
+    def test_summary_dto_hides_prompt_internals(self):
+        """프롬프트 규칙이 바뀌어도 목록 계약이 흔들리지 않아야 한다."""
+        from app.schemas.catalog import PersonaSummaryResponse, ScenarioSummaryResponse
+
+        self.assertNotIn(
+            "relationship_description", PersonaSummaryResponse.model_fields
+        )
+        for field in ("communication_goal", "end_condition", "max_turns"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, ScenarioSummaryResponse.model_fields)
 
 
 if __name__ == "__main__":
