@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
-from app.routers.routers import generate_answer
 from app.schemas.rooms import (
     CreateRoomRequest,
     FeedbackResponse,
@@ -20,6 +19,7 @@ from app.schemas.rooms import (
     SendMessageResponse,
 )
 from app.services import catalog
+from app.services.llm import generate_answer
 from app.services.feedback import (
     FEEDBACK_MESSAGE_LIMIT,
     FEEDBACK_PROMPT_VERSION,
