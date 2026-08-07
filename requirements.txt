@@ -11,3 +11,4 @@ PyYAML
 SQLAlchemy
 psycopg[binary]
 python-multipart
+openai
