@@ -69,6 +69,10 @@ def _make_client() -> tuple[TestClient, object]:
         finally:
             db.close()
 
+    # 카탈로그는 이제 DB에서 읽는다. 비어 있으면 방 생성이 400으로 막히므로 미리 채운다.
+    with TestingSession() as session:
+        seed_catalog(session)
+
     fastapi_app.dependency_overrides[get_db] = override_get_db
     return TestClient(fastapi_app), engine
 
@@ -148,7 +152,7 @@ class RoomTests(ApiTestCase):
 
 
 class SendMessageTests(ApiTestCase):
-    @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!")
+    @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!", autospec=True)
     def test_message_and_answer_are_persisted(self, mock_generate):
         room_id = self._create_room().json()["id"]
 
@@ -163,7 +167,7 @@ class SendMessageTests(ApiTestCase):
         self.assertEqual(messages[0]["content"], "안녕")
         self.assertEqual(mock_generate.call_args.kwargs["persona"], "doyun")
 
-    @patch("app.routers.rooms.generate_answer", return_value="ok")
+    @patch("app.routers.rooms.generate_answer", return_value="ok", autospec=True)
     def test_previous_history_is_passed_to_llm(self, mock_generate):
         room_id = self._create_room().json()["id"]
         self.client.post(f"/rooms/{room_id}/messages", json={"question": "첫 질문"})
@@ -181,9 +185,30 @@ class SendMessageTests(ApiTestCase):
         response = self.client.post("/rooms/none/messages", json={"question": "안녕"})
         self.assertEqual(response.status_code, 404)
 
+    @patch("app.services.llm.invoke_llm", return_value="네 반가워요", autospec=True)
+    def test_history_reaches_the_prompt_without_mocking_generate_answer(self, mock_invoke):
+        """generate_answer를 목킹하지 않고 라우터 -> 서비스 -> 프롬프트 전 구간을 태운다.
+
+        generate_answer를 목킹하는 다른 테스트들은 시그니처 불일치를 잡지 못한 전례가
+        있다(rooms.py가 존재하지 않는 history 인자를 넘겼고 스위트는 green이었다).
+        여기서는 LLM 호출 직전 지점만 막아 그 사이 코드가 전부 실제로 실행되게 한다.
+        """
+        room_id = self._create_room().json()["id"]
+        self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕하세요"})
+        response = self.client.post(
+            f"/rooms/{room_id}/messages", json={"question": "그럼 언제 만날까요?"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        prompt = mock_invoke.call_args.args[0]
+        self.assertIn("## 대화 이력", prompt)
+        self.assertIn("사용자: 안녕하세요", prompt)
+        self.assertIn("상대: 네 반가워요", prompt)
+        self.assertIn("사용자 질문: 그럼 언제 만날까요?", prompt)
+
 
 class FeedbackTests(ApiTestCase):
-    @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요")
+    @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요", autospec=True)
     @patch("app.routers.rooms.generate_feedback", return_value=_feedback_result())
     def test_feedback_returns_structured_result(self, mock_feedback, _mock_answer):
         room_id = self._create_room().json()["id"]
@@ -196,7 +221,7 @@ class FeedbackTests(ApiTestCase):
         self.assertFalse(body["cached"])
         self.assertEqual(mock_feedback.call_args.kwargs["user_id"], "u1")
 
-    @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요")
+    @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요", autospec=True)
     @patch("app.routers.rooms.generate_feedback", return_value=_feedback_result())
     def test_same_conversation_feedback_is_cached(self, mock_feedback, _mock_answer):
         room_id = self._create_room().json()["id"]

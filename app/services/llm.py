@@ -15,9 +15,17 @@ from app.prompt_builder.general_chat import build_chat_prompt
 logger = logging.getLogger(__name__)
 
 
-def generate_answer(question: str, persona: str) -> str:
-    """질문과 persona로 프롬프트를 조합해 LLM 답변을 받는다."""
-    return invoke_llm(build_chat_prompt(question, persona=persona))
+def generate_answer(
+    question: str,
+    persona: str,
+    history: list[dict[str, str]] | None = None,
+) -> str:
+    """질문·persona·대화 이력으로 프롬프트를 조합해 LLM 답변을 받는다.
+
+    history는 오래된 순의 `{"role", "content"}` 목록이다. 무상태 채팅(/chat)은
+    넘기지 않고, 채팅방(/rooms/{id}/messages)만 직전 대화를 함께 넘긴다.
+    """
+    return invoke_llm(build_chat_prompt(question, persona=persona, history=history))
 
 
 def invoke_llm(prompt: str, temperature: float = 0.7) -> str:
