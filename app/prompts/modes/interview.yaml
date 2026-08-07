@@ -1,5 +1,6 @@
 id: interview
 version: 1
+description: 면접 상황 대화 연습
 priority: 70
 
 prompt: |
