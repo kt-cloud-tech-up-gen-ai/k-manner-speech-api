@@ -14,7 +14,7 @@ YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능�
 
 ## 요구사항
 
-- Python 3.10 이상 (`str | Path` 문법 사용)
+- Python 3.10 이상 (`str | Path` 문법 사용). 3.14.3에서 전체 의존성 설치·테스트 검증 완료.
 - Google Gemini API 키 (선택 — 미설정 시 LLM 호출 없이 기본 문구를 반환)
 - OpenAI API 키 (`/rooms/{room_id}/feedback` 사용 시 필요)
 
@@ -25,6 +25,65 @@ python3 -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+테스트를 돌리려면 개발용 의존성도 함께 설치합니다.
+
+```bash
+pip install -r requirements-dev.txt   # requirements.txt를 포함합니다
+pytest
+```
+
+## 의존성 버전 정책
+
+`requirements.txt`와 `requirements-dev.txt`는 **모든 패키지를 `==`로 고정**합니다.
+고정 시점은 **2026-08-07**이며, 각 패키지의 당시 PyPI 최신 릴리스를 채택했습니다.
+
+### 왜 고정했나
+
+이전 `requirements.txt`는 버전 제약이 전혀 없어(`fastapi`, `langchain`, …) 설치 시점마다
+서로 다른 조합이 깔렸습니다. 이 프로젝트에서 이는 이론적인 위험이 아니라 실제 위험입니다.
+
+- **LangChain 생태계가 0.3 → 1.x 메이저 전환을 겪었습니다.** 제약 없는 `langchain`은
+  전환 전후 어느 쪽이든 설치될 수 있어, 같은 커밋이 환경에 따라 다르게 동작합니다.
+- **`pydantic`은 v1/v2 호환성 경계가 있고**, FastAPI ≥ 0.102.0 + Pydantic v2 조합에서는
+  같은 모델이라도 요청/응답 OpenAPI 스키마가 분리 생성됩니다
+  ([공식 문서](https://fastapi.tiangolo.com/how-to/separate-openapi-schemas/)).
+  버전이 흔들리면 API 문서 계약 자체가 흔들립니다.
+- **`SQLAlchemy` 2.x + Alembic**은 마이그레이션 autogenerate 결과가 버전에 민감합니다.
+
+### 검증 방법
+
+고정 세트는 추측이 아니라 실제 설치로 확인했습니다.
+
+1. Python 3.14.3 클린 venv에서 `pip install -r requirements.txt` 의존성 충돌 없이 resolve.
+2. `pytest` 실행 결과 **87 passed / 49 subtests passed**.
+3. 잔여 실패 2건은 의존성 버전과 무관한 기존 이슈입니다.
+   - `test_chat_prompt_spec` — `app/prompts/personas/friendly.yaml` 파일 부재
+   - `test_migrations` — 모델과 마이그레이션 head 간 check constraint 드리프트
+
+### 변경 내역과 근거
+
+| 항목 | 조치 | 사유 |
+| --- | --- | --- |
+| 전체 15개 패키지 | 버전 미지정 → `==` 고정 | 재현 가능한 빌드. 위 "왜 고정했나" 참조 |
+| `langchain-core==1.5.3` | **신규 추가** | `app/services/llm.py:21`, `app/routers/routers.py:222`가 `langchain_core.messages`를 **직접 import** 하는데 선언이 없었음. `langchain-google-genai`의 전이 의존에 우연히 기대던 상태 — 상위 패키지가 의존성을 바꾸면 즉시 `ImportError` |
+| `httpx==0.28.1`, `pytest==9.1.1` | **`requirements-dev.txt` 신규** | `tests/test_new_apis.py`가 `fastapi.testclient.TestClient`를 쓰고 이는 `httpx`를 요구하나 어디에도 선언이 없어, 클린 환경에서 테스트가 실행 불가였음 |
+| `langchain`, `langchain-community`, `langchain-huggingface`, `langchain-text-splitters` | 고정하되 **제거 후보로 표시** | `app/`·`tests/` 전체 grep 결과 import 0건. 실제로 쓰이는 것은 `langchain-google-genai`와 `langchain-core` 뿐. 4개를 빼면 설치 패키지가 **84개 → 57개**로 줄어듦(langgraph·numpy·tokenizers·huggingface_hub·aiohttp 등이 딸려옴) |
+| `python-multipart` | 고정하되 제거 후보로 표시 | `UploadFile`/`Form`을 쓰는 엔드포인트가 없음 |
+
+> 제거 후보 5개는 **아직 지우지 않았습니다.** 향후 파일 업로드나 RAG(text-splitters,
+> huggingface 임베딩) 도입 계획이 있다면 남겨두는 편이 낫고, 없다면 삭제해 설치 표면을
+> 줄이는 것을 권합니다. 판단이 필요한 사안이라 이번 변경에서는 사실만 기록했습니다.
+
+### 갱신 방법
+
+```bash
+# 최신 버전 확인
+curl -s https://pypi.org/pypi/<package>/json | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"
+```
+
+버전을 올린 뒤에는 반드시 **클린 venv 설치 + `pytest`**로 회귀를 확인하고,
+이 표의 "고정 시점"을 갱신합니다.
 
 ## 환경변수
 

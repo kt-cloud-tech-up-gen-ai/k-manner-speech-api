@@ -1,0 +1,9 @@
+# 개발/테스트 전용 의존성 — 2026-08-07 최신으로 고정.
+# tests/test_new_apis.py가 fastapi.testclient.TestClient를 쓰는데 이는 httpx를 요구한다.
+# 지금까지 어느 requirements에도 선언되지 않아 클린 환경에서 테스트가 수집조차 되지 않았다.
+-r requirements.txt
+
+pytest==9.1.1
+# starlette 1.4.1은 TestClient + httpx 1.x 조합에 StarletteDeprecationWarning(httpx2 권장)을
+# 낸다. 경고일 뿐 테스트는 통과하므로 마이그레이션은 별도 과제로 둔다.
+httpx==0.28.1
