@@ -70,12 +70,12 @@ def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
 @router.post("/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(request: CreateRoomRequest, db: Session = Depends(get_db)) -> RoomResponse:
     """채팅방을 생성한다. (KAN-60)"""
-    if catalog.find_persona(request.persona_id) is None:
+    if catalog.find_persona(db, request.persona_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"알 수 없는 persona입니다: {request.persona_id}",
         )
-    if request.scenario_id and catalog.find_scenario(request.scenario_id) is None:
+    if request.scenario_id and catalog.find_scenario(db, request.scenario_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"알 수 없는 시나리오입니다: {request.scenario_id}",
@@ -180,8 +180,8 @@ def request_feedback(room_id: str, db: Session = Depends(get_db)) -> FeedbackRes
         for message in room.messages[-FEEDBACK_MESSAGE_LIMIT:]
         if message.role in {"user", "assistant"}
     ]
-    persona = catalog.find_persona(room.persona_id)
-    scenario = catalog.find_scenario(room.scenario_id) if room.scenario_id else None
+    persona = catalog.find_persona(db, room.persona_id)
+    scenario = catalog.find_scenario(db, room.scenario_id) if room.scenario_id else None
     result = generate_feedback(
         messages,
         persona=persona.description if persona else room.persona_id,

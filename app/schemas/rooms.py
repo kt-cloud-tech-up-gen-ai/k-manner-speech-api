@@ -14,8 +14,8 @@ class CreateRoomRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     persona_id: str = Field(min_length=1, max_length=64)
     scenario_id: str | None = Field(default=None, max_length=64)
-    # TODO(name): 지금은 클라이언트가 반드시 보내야 한다. persona/scenario YAML에 한글
-    #   표시명이 추가되면 "{표시명} M/D HH:MM" 자동 생성으로 바꾸고 선택값으로 되돌릴 것.
+    # TODO(name): 지금은 클라이언트가 반드시 보내야 한다. personas.first_name을 써서
+    #   "{이름} M/D HH:MM" 자동 생성으로 바꾸고 선택값으로 되돌릴 것.
     name: str = Field(min_length=1, max_length=200)
 
 
