@@ -32,15 +32,15 @@ class RoomListResponse(BaseModel):
     rooms: list[RoomResponse]
 
 
-class MessageResponse(BaseModel):
+class ChatMessageResponse(BaseModel):
     id: str
     role: str
     content: str
     created_at: datetime
 
 
-class MessageListResponse(BaseModel):
-    messages: list[MessageResponse]
+class ChatMessageListResponse(BaseModel):
+    messages: list[ChatMessageResponse]
 
 
 class SendMessageRequest(BaseModel):
@@ -49,7 +49,7 @@ class SendMessageRequest(BaseModel):
 
 class SendMessageResponse(BaseModel):
     answer: str
-    message: MessageResponse
+    message: ChatMessageResponse
 
 
 class FeedbackResponse(BaseModel):

@@ -11,8 +11,8 @@ from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.schemas.rooms import (
     CreateRoomRequest,
     FeedbackResponse,
-    MessageListResponse,
-    MessageResponse,
+    ChatMessageListResponse,
+    ChatMessageResponse,
     RoomListResponse,
     RoomResponse,
     SendMessageRequest,
@@ -58,8 +58,8 @@ def _to_room_response(room: ChatRoom) -> RoomResponse:
     )
 
 
-def _to_message_response(message: ChatMessage) -> MessageResponse:
-    return MessageResponse(
+def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
+    return ChatMessageResponse(
         id=message.id,
         role=message.role,
         content=message.content,
@@ -105,11 +105,11 @@ def list_rooms(
     return RoomListResponse(rooms=[_to_room_response(room) for room in rooms])
 
 
-@router.get("/rooms/{room_id}/messages", response_model=MessageListResponse)
-def list_messages(room_id: str, db: Session = Depends(get_db)) -> MessageListResponse:
+@router.get("/rooms/{room_id}/messages", response_model=ChatMessageListResponse)
+def list_messages(room_id: str, db: Session = Depends(get_db)) -> ChatMessageListResponse:
     """채팅방의 채팅 내역을 오래된 순으로 반환한다. (KAN-62)"""
     room = _get_room_or_404(db, room_id)
-    return MessageListResponse(
+    return ChatMessageListResponse(
         messages=[_to_message_response(message) for message in room.messages]
     )
 

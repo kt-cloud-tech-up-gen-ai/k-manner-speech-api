@@ -3,20 +3,20 @@
 from pydantic import BaseModel
 
 
-class PersonaItem(BaseModel):
+class PersonaResponse(BaseModel):
     id: str
     description: str
     voice_id: str | None = None
 
 
 class PersonaListResponse(BaseModel):
-    personas: list[PersonaItem]
+    personas: list[PersonaResponse]
 
 
-class ScenarioItem(BaseModel):
+class ScenarioResponse(BaseModel):
     id: str
     description: str
 
 
 class ScenarioListResponse(BaseModel):
-    scenarios: list[ScenarioItem]
+    scenarios: list[ScenarioResponse]

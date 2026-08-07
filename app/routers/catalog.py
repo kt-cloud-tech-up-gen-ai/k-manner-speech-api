@@ -1,9 +1,9 @@
 from fastapi import APIRouter
 
 from app.schemas.catalog import (
-    PersonaItem,
+    PersonaResponse,
     PersonaListResponse,
-    ScenarioItem,
+    ScenarioResponse,
     ScenarioListResponse,
 )
 from app.services import catalog
@@ -16,7 +16,7 @@ def list_personas() -> PersonaListResponse:
     """대화 상대 persona 목록을 반환한다. (KAN-58)"""
     return PersonaListResponse(
         personas=[
-            PersonaItem(id=p.id, description=p.description, voice_id=p.voice_id)
+            PersonaResponse(id=p.id, description=p.description, voice_id=p.voice_id)
             for p in catalog.list_personas()
         ]
     )
@@ -27,7 +27,7 @@ def list_scenarios() -> ScenarioListResponse:
     """대화 시나리오(모드) 목록을 반환한다. (KAN-59)"""
     return ScenarioListResponse(
         scenarios=[
-            ScenarioItem(id=s.id, description=s.description)
+            ScenarioResponse(id=s.id, description=s.description)
             for s in catalog.list_scenarios()
         ]
     )
