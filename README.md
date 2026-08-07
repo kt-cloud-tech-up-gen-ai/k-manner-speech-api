@@ -1,12 +1,14 @@
 # K-MANNER SPEECH API
 
-YAML 기반 프롬프트 조합 시스템을 갖춘 FastAPI 채팅 API입니다.
+YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능을 갖춘 FastAPI 채팅 API입니다.
 정체성(identity)·성격(personality)·문체(style)·규칙(rule) 등을 YAML 파일로 분리해 두고,
 우선순위에 따라 하나의 시스템 프롬프트로 합성한 뒤 Google Gemini에 질의합니다.
+대화 종료 후 표현 평가는 OpenAI GPT-5.6 Luna의 Structured Outputs로 생성합니다.
 
 - 버전: `0.0.1`
 - 프레임워크: FastAPI + LangChain (`langchain-google-genai`)
 - 기본 모델: `gemini-2.5-flash` (`app/core/config.py`의 `CHAT_MODEL`)
+- 표현 피드백 모델: `gpt-5.6-luna` (`FEEDBACK_MODEL`로 변경 가능)
 
 ---
 
@@ -14,6 +16,7 @@ YAML 기반 프롬프트 조합 시스템을 갖춘 FastAPI 채팅 API입니다.
 
 - Python 3.10 이상 (`str | Path` 문법 사용)
 - Google Gemini API 키 (선택 — 미설정 시 LLM 호출 없이 기본 문구를 반환)
+- OpenAI API 키 (`/rooms/{room_id}/feedback` 사용 시 필요)
 
 ## 설치
 
@@ -35,6 +38,8 @@ cp .env.example .env
 | --- | --- | --- |
 | `GOOGLE_API_KEY` | 선택 | Gemini API 키. 먼저 확인합니다. |
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
+| `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 서버 환경에만 저장합니다. |
+| `FEEDBACK_MODEL` | 선택 | 표현 피드백 모델. 기본값은 `gpt-5.6-luna`. |
 | `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |
 | `SUPABASE_ANON_KEY` | 인증 사용 시 | 공개용 클라이언트 키. 대시보드의 **Publishable key**(`sb_publishable_...`) 또는 Legacy API keys 탭의 anon 키(`eyJ...`). `SUPABASE_PUBLISHABLE_KEY`라는 이름으로 넣어도 됩니다. `service_role`/Secret 키는 사용 금지. |
 
@@ -53,7 +58,7 @@ uvicorn app.main:app --reload
 - 기본 주소: `http://127.0.0.1:8000`
 - Swagger UI: `http://127.0.0.1:8000/docs`
 
-> **반드시 저장소 루트에서 실행하세요.** `app/prompts/chat/general_chat.py`가
+> **반드시 저장소 루트에서 실행하세요.** `app/prompt_builder/general_chat.py`가
 > `PromptComposer("app/prompts")`처럼 상대 경로를 사용하므로, 다른 디렉터리에서 실행하면
 > 프롬프트 YAML을 찾지 못해 `FileNotFoundError`가 발생합니다.
 
@@ -113,6 +118,43 @@ LLM 호출 중 예외가 발생하면 HTTP 500 대신
 > 이 엔드포인트는 **무상태(stateless)** 입니다. 대화 이력을 저장하지 않으며,
 > 매 요청마다 프롬프트를 새로 합성해 단일 메시지로 전송합니다.
 
+### `POST /rooms/{room_id}/feedback`
+
+채팅방의 최근 대화에서 사용자 발화만 평가합니다. 상대 발화, persona, scenario는
+맥락으로 사용하며 높임법·예의·상황 적합성·자연스러움을 각각 25점으로 평가합니다.
+
+```bash
+curl -X POST http://127.0.0.1:8000/rooms/<room_id>/feedback
+```
+
+```json
+{
+  "score": 80,
+  "category_scores": {
+    "honorifics": 18,
+    "politeness": 18,
+    "context_fit": 20,
+    "naturalness": 24
+  },
+  "summary": "의도는 전달되지만 상대에 맞는 존댓말이 필요합니다.",
+  "strengths": ["의도가 분명합니다."],
+  "improvements": ["상대에게 맞는 종결 표현을 사용해 보세요."],
+  "issues": [
+    {
+      "message_id": "...",
+      "original": "야 뭐해",
+      "category": "politeness",
+      "explanation": "친하지 않은 상대에게는 지나치게 반말처럼 들릴 수 있습니다.",
+      "suggestion": "지금 무엇을 하고 계세요?"
+    }
+  ],
+  "cached": false
+}
+```
+
+같은 마지막 메시지·모델·프롬프트 버전 조합의 결과는 `chat_feedbacks`에서 재사용하며,
+이 경우 `cached`가 `true`입니다.
+
 ---
 
 ## 프로젝트 구조
@@ -121,14 +163,21 @@ LLM 호출 중 예외가 발생하면 HTTP 500 대신
 app/
 ├── main.py                 # FastAPI 앱 생성 및 라우터 등록
 ├── core/
-│   ├── config.py           # .env 로딩, CHAT_MODEL 정의
-│   └── state.py            # 전역 상태 딕셔너리 (현재 미사용)
+│   ├── config.py           # .env 로딩, 채팅/피드백 모델 정의
+│   └── db.py               # SQLAlchemy 엔진과 세션
+├── models/
+│   └── chat.py             # 채팅방·메시지·피드백 모델
+├── services/
+│   ├── llm.py              # Gemini 채팅 호출
+│   ├── openai_client.py    # OpenAI 클라이언트 생성
+│   └── feedback.py         # Luna Structured Outputs 표현 평가
 ├── routers/
-│   └── routers.py          # /health, /chat 엔드포인트 + Gemini 호출
+│   ├── routers.py          # /health, /chat, /ask_gemini
+│   └── rooms.py            # 채팅방·메시지·피드백 API
+├── prompt_builder/
+│   ├── composer.py         # PromptComposer
+│   └── general_chat.py     # 일반 채팅 프롬프트 조합
 └── prompts/
-    ├── composer.py         # PromptComposer — YAML 로드 및 우선순위 합성
-    ├── chat/
-    │   └── general_chat.py # 일반 채팅용 프롬프트 조합 정의
     ├── identities/         # 정체성 (assistant, friend, professor)
     ├── personalities/      # 성격 (formal, friendly, humorous, tsundere)
     ├── styles/             # 문체 (concise, detailed, emoji, markdown)
