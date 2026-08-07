@@ -35,7 +35,7 @@ def init_db() -> None:
     TODO(KAN-47/infra): 스키마가 바뀌기 시작하면 create_all 대신 Alembic 마이그레이션으로 전환할 것.
       create_all은 기존 테이블의 컬럼 변경을 반영하지 못한다.
     """
-    from app.models import chat  # noqa: F401  테이블 등록 목적
+    from app.models import chat, user  # noqa: F401  테이블 등록 목적
 
     Base.metadata.create_all(bind=get_engine())
 
