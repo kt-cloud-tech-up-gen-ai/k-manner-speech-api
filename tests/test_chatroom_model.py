@@ -2,10 +2,12 @@
 
 import unittest
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+from tests.catalog_fixtures import seed_catalog
 
 from app.core.db import Base
 from app.models.chat import ChatRoom
@@ -103,6 +105,88 @@ class PersistenceTests(unittest.TestCase):
                     ),
                     {"now": "2026-08-06 00:00:00"},
                 )
+
+
+class ForeignKeyTests(unittest.TestCase):
+    """persona_id / scenario_id의 카탈로그 참조 무결성 (plan-acc KAN-16 T3).
+
+    SQLite는 기본적으로 FK를 강제하지 않으므로 연결마다 PRAGMA를 켠다.
+    """
+
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        event.listen(self.engine, "connect", self._enable_foreign_keys)
+        Base.metadata.create_all(bind=self.engine)
+        self.Session = sessionmaker(bind=self.engine, autoflush=False, expire_on_commit=False)
+
+        with self.Session() as session:
+            seed_catalog(session)
+
+    def tearDown(self):
+        event.remove(self.engine, "connect", self._enable_foreign_keys)
+        Base.metadata.drop_all(bind=self.engine)
+
+    @staticmethod
+    def _enable_foreign_keys(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    def test_declared_foreign_keys_point_at_catalog(self):
+        targets = {
+            fk.parent.name: (fk.column.table.name, fk.ondelete)
+            for fk in ChatRoom.__table__.foreign_keys
+        }
+        self.assertEqual(targets["persona_id"], ("personas", "RESTRICT"))
+        self.assertEqual(targets["scenario_id"], ("scenarios", "RESTRICT"))
+
+    def test_user_id_has_no_foreign_key(self):
+        """Supabase auth.users는 다른 스키마라 FK를 걸지 않는다(논리 참조)."""
+        self.assertEqual(
+            [fk.parent.name for fk in ChatRoom.__table__.foreign_keys if fk.parent.name == "user_id"],
+            [],
+        )
+
+    def test_known_persona_and_scenario_are_accepted(self):
+        with self.Session() as session:
+            session.add(
+                ChatRoom(
+                    user_id="u1", persona_id="doyun", scenario_id="interview", name="방"
+                )
+            )
+            session.commit()
+
+    def test_scenario_id_may_be_null(self):
+        with self.Session() as session:
+            session.add(ChatRoom(user_id="u1", persona_id="doyun", name="방"))
+            session.commit()
+
+    def test_unknown_persona_is_rejected(self):
+        with self.Session() as session:
+            session.add(ChatRoom(user_id="u1", persona_id="ghost", name="방"))
+            with self.assertRaises(IntegrityError):
+                session.commit()
+
+    def test_unknown_scenario_is_rejected(self):
+        with self.Session() as session:
+            session.add(
+                ChatRoom(
+                    user_id="u1", persona_id="doyun", scenario_id="ghost", name="방"
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                session.commit()
+
+    def test_deleting_referenced_persona_is_restricted(self):
+        with self.Session() as session:
+            session.add(ChatRoom(user_id="u1", persona_id="doyun", name="방"))
+            session.commit()
+
+        with self.engine.begin() as connection:
+            with self.assertRaises(IntegrityError):
+                connection.execute(text("DELETE FROM personas WHERE id = 'doyun'"))
 
 
 if __name__ == "__main__":

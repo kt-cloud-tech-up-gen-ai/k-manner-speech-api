@@ -1,0 +1,67 @@
+"""로그인·프로필 API의 요청/응답 DTO."""
+
+from datetime import datetime
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+from app.models.user import Gender, LearningGoal, StudyFrequency
+
+
+class AuthUser(BaseModel):
+    """인증된 사용자(= Supabase auth.users)."""
+
+    id: str
+    email: str | None = None
+    role: str | None = None
+
+
+class LoginResponse(BaseModel):
+    """Swagger Authorize 및 일반 클라이언트가 함께 쓰는 로그인 응답."""
+
+    access_token: str
+    token_type: str = "bearer"
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    user: AuthUser | None = None
+
+
+class NativeLanguage(str, Enum):
+    """모국어. 현재 서비스가 지원하는 값만 허용한다.
+
+    DB 컬럼(user_profiles.native_language)은 varchar 그대로이며 제약을 추가하지 않았다.
+    지원 언어가 늘어나면 여기에 값을 추가하면 된다.
+    """
+
+    KO = "ko"
+    EN = "en"
+
+
+class ProfileResponse(BaseModel):
+    """온보딩 설정. 프로필 행이 없으면 모든 값이 비어 있는 기본값으로 응답한다."""
+
+    # 쓰기는 NativeLanguage(ko/en)로 제한하지만, 읽기는 str로 열어둔다.
+    # 컬럼에 DB 제약이 없어 다른 값(예: "en-US")이 직접 들어갈 수 있고,
+    # 그때 조회가 500으로 죽는 것보다 저장된 값을 그대로 돌려주는 편이 낫다.
+    native_language: str | None = None
+    gender: Gender | None = None
+    learning_goals: list[LearningGoal] = []
+    study_frequency: StudyFrequency | None = None
+    push_enabled: bool = False
+    # 프로필 행이 아직 없으면 null.
+    updated_at: datetime | None = None
+
+
+class MeResponse(BaseModel):
+    user: AuthUser
+    profile: ProfileResponse
+
+
+class ProfileUpdateRequest(BaseModel):
+    """전체 교체(PUT). 다섯 필드를 모두 명시해야 하며, 값으로 null은 허용한다."""
+
+    native_language: NativeLanguage | None = Field(...)
+    gender: Gender | None = Field(...)
+    learning_goals: list[LearningGoal] = Field(...)
+    study_frequency: StudyFrequency | None = Field(...)
+    push_enabled: bool = Field(...)
