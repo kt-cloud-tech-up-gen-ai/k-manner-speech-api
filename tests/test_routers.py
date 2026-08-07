@@ -6,7 +6,8 @@ from urllib.error import HTTPError, URLError
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.routers.routers import AskGeminiRequest, GenerationConfig, ask_gemini
+from app.routers.routers import ask_gemini
+from app.schemas.chat import AskGeminiRequest, GenerationConfig
 
 
 class AskGeminiTests(unittest.TestCase):

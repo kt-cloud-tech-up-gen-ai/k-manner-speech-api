@@ -17,7 +17,8 @@ from urllib.request import urlopen
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+
+from app.schemas.auth import AuthUser
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,6 @@ TIMEOUT_SECONDS = 10
 
 # auto_error=False: 게스트 허용 엔드포인트에서 토큰이 없어도 401을 내지 않게 한다.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-
-
-class AuthUser(BaseModel):
-    """인증된 사용자(= Supabase auth.users)."""
-
-    id: str
-    email: str | None = None
-    role: str | None = None
 
 
 def get_supabase_url() -> str:

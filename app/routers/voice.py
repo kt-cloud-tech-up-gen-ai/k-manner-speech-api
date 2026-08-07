@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 
+from app.schemas.voice import TtsRequest, TtsResponse
 from app.services import catalog, tts
 
 router = APIRouter(tags=["voice"])
@@ -9,17 +9,6 @@ router = APIRouter(tags=["voice"])
 #   기본 음성만 쓰인다. persona별 ElevenLabs 음성 ID를 채워 넣을 것.
 #   → app/prompts/bundles/personas/*.yaml
 # TODO(KAN-64): ElevenLabs 실계정으로 엔드투엔드 검증이 필요하다. 현재 테스트는 urlopen을 목킹한다.
-
-
-class TtsRequest(BaseModel):
-    text: str = Field(min_length=1)
-    persona_id: str | None = Field(default=None, max_length=64)
-
-
-class TtsResponse(BaseModel):
-    audio: str
-    mimeType: str
-    voice_id: str
 
 
 def resolve_voice_id(persona_id: str | None) -> str:
