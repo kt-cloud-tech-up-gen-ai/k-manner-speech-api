@@ -12,3 +12,4 @@ SQLAlchemy
 alembic
 psycopg[binary]
 python-multipart
+openai
