@@ -22,15 +22,15 @@ persona가 할 말을 시나리오마다 정해 둔다. campus_directions는 "�
 `op.get_bind().execute(text, params)` 형태는 온라인 실행에서는 정상이지만 오프라인
 (`alembic upgrade --sql`)에서 파라미터가 바인딩되지 않아 `VALUES (NULL, NULL, ...)`로
 렌더된다. 조용히 잘못된 SQL이 나오므로, 값을 문장에 묶어 두는 `bindparams`를 쓴다.
-(선행 리비전 `9c1f4b0a7d52`의 시드 3건은 아직 옛 형태다.)
+(선행 리비전 `9c1f4b0a7d52`의 시드 3건도 뒤늦게 같은 형태로 맞췄다.)
 
 ## `version`에 타입을 명시하는 이유
 
 `bindparams(version="2026-08-08 00:00:00+00:00")`처럼 문자열을 넘기면 SQLAlchemy가 값에서
 타입을 VARCHAR로 추론하고, psycopg가 `$N::VARCHAR`로 렌더한다. PostgreSQL은 varchar를
 timestamptz로 암묵 변환하지 않으므로 `DatatypeMismatch`로 실패한다(실제로 겪었다).
-execute 시점에 파라미터를 넘기는 옛 형태(`9c1f4b0a7d52`)는 타입이 붙지 않아 PostgreSQL이
-대상 컬럼에서 추론하기 때문에 우연히 동작했다. bindparams로 옮기면서 드러난 함정이다.
+execute 시점에 파라미터를 넘기는 옛 형태는 타입이 붙지 않아 PostgreSQL이 대상 컬럼에서
+추론하기 때문에 우연히 동작했다. bindparams로 옮기면서 드러난 함정이다.
 
 그래서 `datetime` 객체를 `sa.DateTime(timezone=True)`로 명시해 바인딩한다. 문자열에
 타입만 붙이면 SQLite가 거부하므로(`SQLite DateTime type only accepts Python datetime`),

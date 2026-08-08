@@ -3,7 +3,8 @@ from collections.abc import Iterator
 from enum import Enum
 from functools import lru_cache
 
-from sqlalchemy import Engine, Enum as SAEnum, create_engine
+from sqlalchemy import Engine, create_engine
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DEFAULT_DATABASE_URL = ""

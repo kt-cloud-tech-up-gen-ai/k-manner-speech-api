@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, StringConstraints
 # app/services/feedback.py에 있다. HTTP 응답인 FeedbackResponse만 여기 두고 임베드한다.
 from app.services.feedback import CategoryScores, FeedbackIssue
 
-
 # 카탈로그 id는 공백을 걷어낸 뒤 비면 안 된다.
 #
 # scenario_id에 이 제약이 없던 동안 ""와 "   "의 결과가 갈렸다. ""는 라우터의 진리값

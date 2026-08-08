@@ -510,8 +510,10 @@ curl -X POST http://127.0.0.1:8000/rooms/<room_id>/messages \
 
 > **아직 시나리오가 대화에 반영되지 않습니다.** `scenario_id`는 저장만 되고 프롬프트에는
 > 들어가지 않아, 시나리오가 있는 방과 자유 대화방의 프롬프트가 현재 동일합니다.
-> `communication_goal`·`max_turns` 같은 값도 아직 대화에 영향을 주지 않습니다
+> `max_turns` 같은 값도 아직 대화에 영향을 주지 않습니다
 > (`app/routers/rooms.py`의 `TODO(KAN-59/KAN-65)`).
+> `communication_goal`은 예외로, 대화 프롬프트가 아니라
+> [표현 피드백](#post-roomsroom_idfeedback)의 채점 입력으로만 쓰입니다.
 
 #### `GET /rooms/{room_id}/messages`
 
@@ -550,6 +552,8 @@ curl -X DELETE http://127.0.0.1:8000/rooms/<room_id> -H "Authorization: Bearer <
 
 채팅방의 최근 대화에서 사용자 발화만 평가합니다. 상대 발화, persona, scenario는
 맥락으로 사용하며 높임법·예의·상황 적합성·자연스러움을 각각 25점으로 평가합니다.
+시나리오가 있는 방은 그 시나리오의 `communication_goal`을 함께 보내며, 상황 적합성
+점수는 이 목표에 맞는 표현인지로 판단합니다(자유 대화방은 목표 없이 평가합니다).
 
 로그인이 필요하며 내 방만 평가합니다(남의 방·없는 방 모두 `404`).
 
@@ -584,7 +588,9 @@ curl -X POST http://127.0.0.1:8000/rooms/<room_id>/feedback \
 ```
 
 같은 마지막 메시지·모델·프롬프트 버전 조합의 결과는 `chat_feedbacks`에서 재사용하며,
-이 경우 `cached`가 `true`입니다.
+이 경우 `cached`가 `true`입니다. LLM에 넣는 내용(지시문·입력 값)이 바뀌면 프롬프트 버전을
+올리므로, 이전 버전으로 저장된 결과는 재사용되지 않고 다시 채점됩니다
+(현재 `expression-feedback-v2`).
 
 ### `GET /auth/me`
 

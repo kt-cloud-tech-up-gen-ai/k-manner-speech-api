@@ -1,0 +1,17 @@
+# 린터 설정. 규칙은 "지금 이 트리에서 실제로 무엇을 잡는지" 재고 고른 것만 켠다.
+[tool.ruff]
+# isort(I001)가 import 줄을 언제 괄호로 펼칠지 정하는 값이기도 하다.
+# 88로 낮추면 migrations/env.py의 `from app.models import catalog, chat, user`(97자)가
+# 5줄로 펼쳐진다. 100과 110은 이 트리에서 --fix 결과가 완전히 같아 관례대로 100을 쓴다.
+line-length = 100
+
+[tool.ruff.lint]
+# ruff 기본값(E4,E7,E9,F) + I + S608.
+# E501은 일부러 뺐다. 이 저장소 주석·프롬프트가 한국어인데 ruff는 줄 길이를 글자 수가 아니라
+# 표시 폭(한글=2칸)으로 세므로, 68자짜리 한 줄이 93폭으로 계산된다. 88 기준 120건,
+# 100 기준 10건이 잡히지만 대부분 줄바꿈할 수 없는 산문이라 지금 켜면 소음만 된다.
+select = ["E4", "E7", "E9", "F", "I", "S608"]
+
+[tool.ruff.lint.isort]
+# 없으면 migrations/env.py의 `from app.models import ...`가 서드파티로 분류돼 I001이 뜬다.
+known-first-party = ["app"]
