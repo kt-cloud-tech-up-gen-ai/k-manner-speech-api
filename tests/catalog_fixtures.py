@@ -10,7 +10,7 @@ API 테스트가 먼저 깨지므로, id를 바꿀 때는 양쪽을 함께 고�
 
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Persona, Scenario
+from app.models.catalog import Persona, Scenario, persona_scenarios
 from app.models.user import Gender
 
 PERSONA_ID = "doyun"
@@ -47,7 +47,23 @@ def make_scenario(scenario_id: str = SCENARIO_ID, **overrides) -> Scenario:
     return Scenario(**values)
 
 
+def link(session: Session, persona_id: str, scenario_id: str) -> None:
+    """조합을 고를 수 있게 만든다. ORM 관계 대신 매핑 테이블에 직접 넣는다.
+
+    관계를 통해 넣으면 양쪽 컬렉션이 채워진 채로 남아, 임베드 응답 테스트가 DB에서 읽은
+    결과인지 세션에 남은 객체인지 구분되지 않는다.
+    """
+    session.execute(
+        persona_scenarios.insert().values(
+            persona_id=persona_id, scenario_id=scenario_id
+        )
+    )
+    session.commit()
+
+
 def seed_catalog(session: Session) -> None:
+    """API가 기대하는 최소 카탈로그. 조합까지 만들어야 채팅방 생성이 가능하다."""
     session.add(make_persona())
     session.add(make_scenario())
     session.commit()
+    link(session, PERSONA_ID, SCENARIO_ID)
