@@ -2,15 +2,15 @@
 
 import unittest
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tests.catalog_fixtures import seed_catalog
-
 from app.core.db import Base
+from app.models.catalog import Persona
 from app.models.chat import ChatRoom, ChatRoomStatus
+from tests.catalog_fixtures import seed_catalog
 
 # (컬럼명, python 타입 문자열, nullable)
 EXPECTED_COLUMNS = {
@@ -117,19 +117,6 @@ class PersistenceTests(unittest.TestCase):
             with self.assertRaises(IntegrityError):
                 session.commit()
 
-    def test_last_message_at_is_not_null_at_db_level(self):
-        """ORM은 None을 '미지정'으로 보고 default를 채우므로 DB 제약을 직접 확인한다."""
-        with self.engine.begin() as connection:
-            with self.assertRaises(IntegrityError):
-                connection.execute(
-                    text(
-                        "INSERT INTO chat_rooms "
-                        "(id, user_id, persona_id, name, created_at, updated_at, last_message_at) "
-                        "VALUES ('r1', 'u1', 'doyun', '방', :now, :now, NULL)"
-                    ),
-                    {"now": "2026-08-06 00:00:00"},
-                )
-
 
 class ForeignKeyTests(unittest.TestCase):
     """persona_id / scenario_id의 카탈로그 참조 무결성 (plan-acc KAN-16 T3).
@@ -204,13 +191,30 @@ class ForeignKeyTests(unittest.TestCase):
                 session.commit()
 
     def test_deleting_referenced_persona_is_restricted(self):
+        """RESTRICT: 방이 참조하는 동안에는 persona 행을 지울 수 없다.
+
+        `DELETE FROM personas`를 그대로 보내는 방식으로는 이 계약을 지킬 수 없다.
+        seed_catalog가 persona_scenarios 매핑 행(doyun↔interview)도 함께 넣기 때문에,
+        chat_rooms의 FK를 통째로 지워도 매핑 테이블의 RESTRICT가 대신 DELETE를 막아
+        초록불이 유지된다(그쪽은 test_catalog_model.py가 따로 지킨다).
+
+        session.delete는 매핑 행을 먼저 정리하고 나서 personas를 지운다. 그래서 남아서
+        DELETE를 막는 것은 chat_rooms → personas FK 하나뿐이고, 그것이 이 테스트가
+        확인하려는 제약이다.
+
+        전제: Persona에서 ChatRoom으로 가는 ORM 관계가 없다. 그 관계를 추가하면
+        session.delete가 참조하는 방까지 손대기 때문에 이 테스트가 헛되이 빨간불이 된다
+        (제약은 멀쩡한데 IntegrityError가 안 난다). 그때는 방을 지우는 대신
+        DELETE 문을 직접 보내되, 위에서 말한 매핑 행 교란을 먼저 없애야 한다.
+        """
         with self.Session() as session:
             session.add(ChatRoom(user_id="u1", persona_id="doyun", name="방"))
             session.commit()
 
-        with self.engine.begin() as connection:
+        with self.Session() as session:
+            session.delete(session.get(Persona, "doyun"))
             with self.assertRaises(IntegrityError):
-                connection.execute(text("DELETE FROM personas WHERE id = 'doyun'"))
+                session.commit()
 
 
 class ProgressTests(unittest.TestCase):

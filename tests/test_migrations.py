@@ -243,8 +243,10 @@ class CatalogRevisionTests(MigrationTestCase):
             for table, columns in required.items():
                 for column in columns:
                     with self.subTest(table=table, column=column):
+                        # noqa 사유: table·column은 위 required 딕셔너리의 리터럴이며
+                        # 식별자라 바인드 파라미터로 넘길 수 없다.
                         nulls = connection.execute(
-                            text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL")
+                            text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL")  # noqa: S608
                         ).scalar()
                         self.assertEqual(nulls, 0)
 
@@ -484,6 +486,10 @@ class OfflineSqlTests(MigrationTestCase):
     DBA에게 넘길 SQL 스크립트를 뽑는 경로다. `op.get_bind().execute(text, params)`로
     시드를 넣으면 온라인 실행은 멀쩡한데 오프라인에서는 파라미터가 바인딩되지 않아
     `VALUES (NULL, NULL)`이 나온다. 조용히 잘못된 스크립트가 만들어지므로 여기서 막는다.
+
+    범위의 시작은 카탈로그 리비전의 **직전**(SCHEMA_CHANGE)이다. `X:Y`는 X를 제외하고
+    Y까지이므로, CATALOG에서 시작하면 정작 시드를 넣는 9c1f4b0a7d52 자신이 검사에서
+    빠진다(실제로 그 리비전에 두 결함이 다 있었는데 통과하고 있었다).
     """
 
     def _offline_sql(self, revision_range):
@@ -510,7 +516,7 @@ class OfflineSqlTests(MigrationTestCase):
         (중복·고아 참조 검사 같은 것)를 그대로 두면 AttributeError로 죽는다.
         온라인 테스트만으로는 드러나지 않는다.
         """
-        sql = self._offline_sql(f"{CATALOG}:head")
+        sql = self._offline_sql(f"{SCHEMA_CHANGE}:head")
         self.assertIn("uq_chat_rooms_free_talk", sql)
 
     def test_free_talk_index_is_partial_on_postgresql(self):
@@ -519,7 +525,7 @@ class OfflineSqlTests(MigrationTestCase):
         SQLite 테스트로는 잡히지 않는다. `sqlite_where`만 주고 `postgresql_where`를
         빠뜨려도 개발 환경은 멀쩡하기 때문이다. PostgreSQL DDL을 직접 확인한다.
         """
-        sql = self._offline_sql(f"{CATALOG}:head")
+        sql = self._offline_sql(f"{SCHEMA_CHANGE}:head")
         create = next(
             line for line in sql.splitlines() if "uq_chat_rooms_free_talk" in line
         )
@@ -527,13 +533,27 @@ class OfflineSqlTests(MigrationTestCase):
         self.assertIn("WHERE scenario_id IS NULL", create)
 
     def test_seed_inserts_render_actual_values(self):
-        sql = self._offline_sql(f"{CATALOG}:head")
+        """파라미터가 바인딩되지 않으면 모든 값이 NULL로 렌더된다.
+
+        "NULL, NULL"로는 판별할 수 없다. roleplay 시드는 time_context·place_context가
+        둘 다 정당한 NULL이라 그 부분 문자열이 정상 스크립트에도 나온다. 대신 첫 컬럼을
+        본다. 시드의 첫 컬럼은 id(또는 persona_id)이고 어떤 시드에서도 NULL이 아니므로,
+        `VALUES (NULL`은 바인딩이 통째로 빠졌을 때만 나온다.
+        """
+        sql = self._offline_sql(f"{SCHEMA_CHANGE}:head")
 
         inserts = [line for line in sql.splitlines() if line.startswith("INSERT INTO")]
         self.assertTrue(inserts)
         for statement in inserts:
             with self.subTest(statement=statement[:60]):
-                self.assertNotIn("NULL, NULL", statement)
+                self.assertNotIn("VALUES (NULL", statement)
+
+    def test_catalog_seed_values_appear_in_the_script(self):
+        """NULL이 아니라는 것만으로는 부족하다. 시드 상수의 값이 그대로 실려야 한다."""
+        sql = self._offline_sql(f"{SCHEMA_CHANGE}:{CATALOG}")
+        self.assertIn("'doyun'", sql)
+        self.assertIn("'interview'", sql)
+        self.assertIn("'roleplay'", sql)
 
     def test_campus_directions_values_appear_in_the_script(self):
         sql = self._offline_sql(f"{PROGRESS}:{CAMPUS_DIRECTIONS}")

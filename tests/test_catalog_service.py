@@ -13,10 +13,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tests.catalog_fixtures import link, make_persona, make_scenario, seed_catalog
-
 from app.core.db import Base
 from app.services import catalog
+from tests.catalog_fixtures import link, make_persona, make_scenario, seed_catalog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

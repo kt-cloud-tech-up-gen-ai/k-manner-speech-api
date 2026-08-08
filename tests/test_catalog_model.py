@@ -2,16 +2,15 @@
 
 import unittest
 
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tests.catalog_fixtures import make_persona, make_scenario
-
 from app.core.db import Base
 from app.models.catalog import Persona, Scenario, persona_scenarios
 from app.models.user import Gender
+from tests.catalog_fixtures import make_persona, make_scenario
 
 # (컬럼명: (타입 문자열, nullable))
 EXPECTED_PERSONA_COLUMNS = {
@@ -166,17 +165,11 @@ class PersistenceTests(unittest.TestCase):
         self._version_roundtrip(make_scenario())
 
     def test_gender_rejects_value_outside_enum(self):
-        with self.engine.begin() as connection:
+        """enum_column의 CHECK 제약이 DB 계층에서 막는다."""
+        with self.Session() as session:
+            session.add(make_persona("bad", gender="alien"))
             with self.assertRaises(IntegrityError):
-                connection.execute(
-                    text(
-                        "INSERT INTO personas"
-                        " (id, first_name, age, gender, description,"
-                        "  relationship_description, version)"
-                        " VALUES ('bad', '이름', 22, 'alien', '설명', '선배', :now)"
-                    ),
-                    {"now": "2026-08-07 00:00:00"},
-                )
+                session.commit()
 
     def test_scenario_roundtrip_with_full_context(self):
         with self.Session() as session:
@@ -209,21 +202,18 @@ class PersistenceTests(unittest.TestCase):
             self.assertIsNone(saved.place_context)
 
     def test_duplicate_persona_id_is_rejected(self):
+        """id는 자연키다. 같은 id로 두 번 넣으면 PK 제약이 막는다.
+
+        세션을 새로 열어야 한다. 같은 세션에서 두 번 add하면 identity map이 두 객체를
+        하나로 합쳐 버려 INSERT가 애초에 두 번 나가지 않는다.
+        """
         with self.Session() as session:
             session.add(make_persona())
             session.commit()
 
         with self.Session() as session:
+            session.add(make_persona(description="중복"))
             with self.assertRaises(IntegrityError):
-                session.execute(
-                    text(
-                        "INSERT INTO personas"
-                        " (id, first_name, age, gender, description,"
-                        "  relationship_description, version)"
-                        " VALUES ('doyun', '도윤', 22, 'male', '중복', '또래', :now)"
-                    ),
-                    {"now": "2026-08-07 00:00:00"},
-                )
                 session.commit()
 
 

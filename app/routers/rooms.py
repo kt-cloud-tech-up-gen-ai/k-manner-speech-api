@@ -1,4 +1,3 @@
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -10,17 +9,16 @@ from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.schemas.rooms import (
-    CreateRoomRequest,
-    FeedbackResponse,
     ChatMessageListResponse,
     ChatMessageResponse,
+    CreateRoomRequest,
+    FeedbackResponse,
     RoomListResponse,
     RoomResponse,
     SendMessageRequest,
     SendMessageResponse,
 )
 from app.services import catalog
-from app.services.llm import generate_answer
 from app.services.feedback import (
     FEEDBACK_MESSAGE_LIMIT,
     FEEDBACK_PROMPT_VERSION,
@@ -28,6 +26,7 @@ from app.services.feedback import (
     FeedbackResult,
     generate_feedback,
 )
+from app.services.llm import generate_answer
 
 router = APIRouter(tags=["rooms"])
 
@@ -276,6 +275,8 @@ def request_feedback(
         messages,
         persona=persona.description if persona else room.persona_id,
         scenario=scenario.description if scenario else room.scenario_id,
+        # 시나리오가 있을 때만 채점 기준이 되는 목적이 존재한다. 자유 대화방은 None.
+        communication_goal=scenario.communication_goal if scenario else None,
         user_id=room.user_id,
     )
 

@@ -38,9 +38,11 @@ FREE_TALK_ONLY = "scenario_id IS NULL"
 
 
 def _assert_no_duplicate_free_talk_rooms(connection: sa.Connection) -> None:
+    # noqa 사유: 보간하는 FREE_TALK_ONLY는 이 모듈의 상수 문자열이다. 인덱스의 WHERE
+    # 절과 한 글자도 어긋나면 안 되는 값이라 일부러 상수를 공유한다.
     duplicates = connection.execute(
         sa.text(
-            "SELECT user_id, persona_id, COUNT(*) AS n"
+            "SELECT user_id, persona_id, COUNT(*) AS n"  # noqa: S608
             " FROM chat_rooms"
             f" WHERE {FREE_TALK_ONLY}"
             " GROUP BY user_id, persona_id"
@@ -52,9 +54,11 @@ def _assert_no_duplicate_free_talk_rooms(connection: sa.Connection) -> None:
 
     details = []
     for user_id, persona_id, count in duplicates:
+        # noqa 사유: 위와 같다. user_id·persona_id는 바인드 파라미터로 넘기고 있고,
+        # 보간되는 것은 상수 조건절뿐이다.
         room_ids = connection.execute(
             sa.text(
-                "SELECT id FROM chat_rooms"
+                "SELECT id FROM chat_rooms"  # noqa: S608
                 f" WHERE {FREE_TALK_ONLY}"
                 "   AND user_id = :user_id AND persona_id = :persona_id"
                 " ORDER BY created_at"
