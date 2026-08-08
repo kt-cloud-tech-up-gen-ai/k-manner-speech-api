@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tests.catalog_fixtures import seed_catalog
+from tests.catalog_fixtures import make_persona, make_scenario, seed_catalog
 
 from app.core.auth import AuthUser, require_user
 from app.core.config import FEEDBACK_MODEL
@@ -51,6 +51,11 @@ def _feedback_result() -> FeedbackResult:
     )
 
 TEST_USER = AuthUser(id="test-user-1", email="tester@example.com", role="authenticated")
+
+
+def _user(user_id: str) -> AuthUser:
+    """다른 사용자로 요청할 때 쓰는 최소 AuthUser."""
+    return AuthUser(id=user_id, email=f"{user_id}@example.com", role="authenticated")
 
 
 def _make_client() -> tuple[TestClient, object]:
@@ -96,13 +101,17 @@ class ApiTestCase(unittest.TestCase):
         fastapi_app.dependency_overrides[require_user] = lambda: user
         return user
 
-    def _create_room(self, **overrides):
-        payload = {
-            "user_id": "u1",
-            "persona_id": "doyun",
-            "name": "테스트 방",
-            **overrides,
-        }
+    def session(self):
+        """테스트가 카탈로그를 직접 손볼 때 쓰는 세션. 라우터가 쓰는 엔진과 같다."""
+        return sessionmaker(bind=self.engine, autoflush=False, expire_on_commit=False)()
+
+    def _create_room(self, user: AuthUser = TEST_USER, **overrides):
+        """방 주인은 토큰에서 온다. 본문에 user_id를 넣지 않는다.
+
+        다른 사용자로 만들려면 `user=`를 넘긴다(`_user()` 참고).
+        """
+        self._authenticate(user)
+        payload = {"persona_id": "doyun", "name": "테스트 방", **overrides}
         return self.client.post("/rooms", json=payload)
 
 
@@ -151,6 +160,31 @@ class CatalogTests(ApiTestCase):
         self.assertEqual(self.client.get("/personas/ghost").status_code, 404)
         self.assertEqual(self.client.get("/scenarios/ghost").status_code, 404)
 
+    def test_persona_detail_lists_selectable_scenarios(self):
+        """상대를 고른 화면에서 곧바로 상황을 고를 수 있어야 한다. (KAN-73, KAN-74)"""
+        body = self.client.get("/personas/doyun").json()
+        self.assertEqual([item["id"] for item in body["scenarios"]], ["interview"])
+        # 목록 원소는 요약이다. 진행 규칙은 시나리오 단건에서 받는다.
+        self.assertNotIn("max_turns", body["scenarios"][0])
+
+    def test_scenario_detail_lists_personas(self):
+        body = self.client.get("/scenarios/interview").json()
+        self.assertEqual([item["id"] for item in body["personas"]], ["doyun"])
+        self.assertNotIn("relationship_description", body["personas"][0])
+
+    def test_list_responses_do_not_embed(self):
+        """목록 계약은 그대로 둔다. 임베드는 단건에만."""
+        persona = self.client.get("/personas").json()["personas"][0]
+        self.assertNotIn("scenarios", persona)
+
+        scenario = self.client.get("/scenarios").json()["scenarios"][0]
+        self.assertNotIn("personas", scenario)
+
+    def test_detail_does_not_leak_turn_limit_exit_line(self):
+        """턴 상한 마무리 대사는 대화 메시지로 전달된다. 카탈로그로 미리 내려 주지 않는다."""
+        body = self.client.get("/scenarios/interview").json()
+        self.assertNotIn("turn_limit_exit_line", body)
+
 
 class RoomTests(ApiTestCase):
     def test_create_room_returns_created_room(self):
@@ -162,6 +196,34 @@ class RoomTests(ApiTestCase):
         self.assertEqual(body["scenario_id"], "interview")
         self.assertTrue(body["id"])
 
+    def test_create_room_requires_authentication(self):
+        """토큰이 없으면 방을 만들 수 없다. (_authenticate를 부르지 않는다)"""
+        response = self.client.post(
+            "/rooms", json={"persona_id": "doyun", "name": "테스트 방"}
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_create_room_owner_comes_from_token_not_body(self):
+        """본문의 user_id로 남의 방을 만들 수 없다.
+
+        요청 본문에 user_id를 넣어도 방 주인은 토큰의 사용자여야 한다. 스키마에서 필드를
+        제거했으므로 보내도 무시된다.
+        """
+        self._authenticate(_user("attacker"))
+        response = self.client.post(
+            "/rooms",
+            json={"user_id": "victim", "persona_id": "doyun", "name": "남의 방"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["user_id"], "attacker")
+
+    def test_create_room_request_has_no_user_id_field(self):
+        """계약에서 사라졌는지 확인한다. 필드가 남아 있으면 위 테스트가 무의미해진다."""
+        from app.schemas.rooms import CreateRoomRequest
+
+        self.assertNotIn("user_id", CreateRoomRequest.model_fields)
+
     def test_create_room_with_unknown_persona_is_rejected(self):
         response = self._create_room(persona_id="nobody")
         self.assertEqual(response.status_code, 400)
@@ -170,19 +232,220 @@ class RoomTests(ApiTestCase):
         response = self._create_room(scenario_id="does-not-exist")
         self.assertEqual(response.status_code, 400)
 
-    def test_room_list_is_filtered_by_user(self):
-        self._create_room(user_id="u1")
-        self._create_room(user_id="u2")
+    def test_create_room_with_unpaired_combination_is_rejected(self):
+        """준비되지 않은 조합으로는 방을 만들 수 없다. (KAN-73, KAN-74)"""
+        with self.session() as session:
+            session.add(make_scenario("unpaired", description="매핑하지 않은 시나리오"))
+            session.commit()
 
-        rooms = self.client.get("/rooms", params={"user_id": "u1"}).json()["rooms"]
-        self.assertEqual(len(rooms), 1)
-        self.assertEqual(rooms[0]["user_id"], "u1")
+        response = self._create_room(scenario_id="unpaired")
+        self.assertEqual(response.status_code, 400)
+        detail = response.json()["detail"]
+        # 어느 조합이 막혔는지 알 수 있어야 고칠 수 있다.
+        self.assertIn("doyun", detail)
+        self.assertIn("unpaired", detail)
 
-    def test_room_list_requires_user_id(self):
-        self.assertEqual(self.client.get("/rooms").status_code, 422)
+    def test_create_room_without_scenario_skips_pair_check(self):
+        """시나리오가 없으면 조합 자체가 없다. 상대만으로 만드는 자유 수다 방은 허용한다."""
+        # 자유 수다 방은 사용자-persona 당 하나라 케이스마다 사용자를 달리한다.
+        for label, payload in (
+            ("생략", {"user": _user("u-omitted")}),
+            ("null", {"user": _user("u-null"), "scenario_id": None}),
+        ):
+            with self.subTest(case=label):
+                response = self._create_room(**payload)
+                self.assertEqual(response.status_code, 201)
+                self.assertIsNone(response.json()["scenario_id"])
+
+    def test_blank_scenario_id_is_rejected_instead_of_silently_dropped(self):
+        """빈 값은 "시나리오를 고르지 않았다"가 아니라 잘못된 요청이다.
+
+        예전에는 ""가 진리값 분기를 통과해 201 + scenario_id=NULL(자유 수다 방)이 됐고
+        "   "는 400이었다. 같은 실수인데 결과가 갈렸다.
+        """
+        for blank in ("", "   "):
+            with self.subTest(value=repr(blank)):
+                response = self._create_room(scenario_id=blank)
+                self.assertEqual(response.status_code, 422)
+
+    def test_second_free_talk_room_for_same_persona_is_rejected(self):
+        """자유 수다 방은 상대마다 하나. 두 번째는 409이며 기존 방을 알려 준다."""
+        first = self._create_room()
+        self.assertEqual(first.status_code, 201)
+
+        second = self._create_room(name="또 만들기")
+        self.assertEqual(second.status_code, 409)
+        self.assertIn(first.json()["id"], second.json()["detail"])
+
+    def test_free_talk_room_is_allowed_once_per_persona(self):
+        """제한은 상대별이다. persona가 다르면 각각 하나씩 가질 수 있다."""
+        with self.session() as session:
+            session.add(make_persona("mina", first_name="미나"))
+            session.commit()
+
+        self.assertEqual(self._create_room(persona_id="doyun").status_code, 201)
+        self.assertEqual(self._create_room(persona_id="mina").status_code, 201)
+
+    def test_free_talk_limit_does_not_apply_to_scenario_rooms(self):
+        """시나리오가 있는 방은 같은 조합으로 몇 개든 만들 수 있다."""
+        for _ in range(2):
+            response = self._create_room(scenario_id="interview")
+            self.assertEqual(response.status_code, 201)
+
+    def test_free_talk_limit_is_per_user(self):
+        self.assertEqual(self._create_room(user=_user("u1")).status_code, 201)
+        self.assertEqual(self._create_room(user=_user("u2")).status_code, 201)
+
+    def test_blank_persona_id_is_rejected(self):
+        for blank in ("", "   "):
+            with self.subTest(value=repr(blank)):
+                self.assertEqual(self._create_room(persona_id=blank).status_code, 422)
+
+    def test_create_room_stores_canonical_ids(self):
+        """요청 값을 그대로 저장하면 FK를 위반한다(PostgreSQL에서 500).
+
+        조회는 대소문자·공백을 관대하게 받되, 저장은 카탈로그 행의 id로 한다.
+        """
+        response = self._create_room(persona_id="  DOYUN  ", scenario_id="Interview")
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["persona_id"], "doyun")
+        self.assertEqual(body["scenario_id"], "interview")
+
+    def test_room_list_shows_only_my_rooms(self):
+        """목록의 주인은 토큰이 정한다. 남의 방은 보이지 않는다."""
+        self._create_room(user=_user("u1"))
+        self._create_room(user=_user("u2"))
+
+        self._authenticate(_user("u1"))
+        rooms = self.client.get("/rooms").json()["rooms"]
+        self.assertEqual([room["user_id"] for room in rooms], ["u1"])
+
+    def test_room_list_ignores_user_id_query_parameter(self):
+        """예전 파라미터를 그대로 보내도 남의 목록이 나오면 안 된다."""
+        self._create_room(user=_user("victim"))
+
+        self._authenticate(_user("attacker"))
+        rooms = self.client.get("/rooms", params={"user_id": "victim"}).json()["rooms"]
+        self.assertEqual(rooms, [])
+
+    def test_room_list_requires_authentication(self):
+        self.assertEqual(self.client.get("/rooms").status_code, 401)
 
     def test_messages_of_unknown_room_is_404(self):
+        self._authenticate()
         self.assertEqual(self.client.get("/rooms/none/messages").status_code, 404)
+
+    def test_delete_room_removes_it_from_my_list(self):
+        room_id = self._create_room().json()["id"]
+
+        response = self.client.delete(f"/rooms/{room_id}")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.content, b"")
+
+        self.assertEqual(self.client.get("/rooms").json()["rooms"], [])
+        self.assertEqual(self.client.get(f"/rooms/{room_id}/messages").status_code, 404)
+
+    @patch("app.routers.rooms.generate_answer", return_value="네", autospec=True)
+    def test_delete_room_removes_its_messages(self, _mock_answer):
+        """대화 내역도 함께 사라진다. 방만 지우고 메시지가 남으면 고아 행이 된다."""
+        room_id = self._create_room().json()["id"]
+        self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"})
+
+        with self.session() as session:
+            self.assertEqual(
+                session.execute(
+                    text("SELECT COUNT(*) FROM chat_messages WHERE room_id = :id"),
+                    {"id": room_id},
+                ).scalar(),
+                2,
+            )
+
+        self.client.delete(f"/rooms/{room_id}")
+
+        with self.session() as session:
+            self.assertEqual(
+                session.execute(text("SELECT COUNT(*) FROM chat_messages")).scalar(), 0
+            )
+
+    def test_deleting_free_talk_room_frees_the_slot(self):
+        """자유 수다 방을 지우면 같은 상대로 다시 만들 수 있어야 한다."""
+        room_id = self._create_room().json()["id"]
+        self.assertEqual(self._create_room().status_code, 409)
+
+        self.client.delete(f"/rooms/{room_id}")
+        self.assertEqual(self._create_room().status_code, 201)
+
+    def test_cannot_delete_another_users_room(self):
+        room_id = self._create_room(user=_user("victim")).json()["id"]
+
+        self._authenticate(_user("attacker"))
+        self.assertEqual(self.client.delete(f"/rooms/{room_id}").status_code, 404)
+
+        # 404로 막히는 데서 그치지 않고 실제로 남아 있어야 한다.
+        self._authenticate(_user("victim"))
+        self.assertEqual(
+            [room["id"] for room in self.client.get("/rooms").json()["rooms"]], [room_id]
+        )
+
+    def test_delete_room_requires_authentication(self):
+        room_id = self._create_room().json()["id"]
+        fastapi_app.dependency_overrides.pop(require_user, None)
+        self.assertEqual(self.client.delete(f"/rooms/{room_id}").status_code, 401)
+
+    def test_delete_unknown_room_is_404(self):
+        self._authenticate()
+        self.assertEqual(self.client.delete("/rooms/none").status_code, 404)
+
+    def test_other_users_room_is_indistinguishable_from_a_missing_one(self):
+        """남의 방과 없는 방에 같은 404를 준다.
+
+        403으로 나누면 응답만으로 그 room_id가 실재한다는 사실을 알려 주게 된다.
+        메시지 조회·전송·피드백 셋 다 같은 관문(_get_room_or_404)을 지난다.
+        """
+        room_id = self._create_room(user=_user("victim")).json()["id"]
+
+        self._authenticate(_user("attacker"))
+        calls = (
+            ("조회", lambda: self.client.get(f"/rooms/{room_id}/messages")),
+            ("전송", lambda: self.client.post(
+                f"/rooms/{room_id}/messages", json={"question": "안녕"}
+            )),
+            ("피드백", lambda: self.client.post(f"/rooms/{room_id}/feedback")),
+        )
+        for label, call in calls:
+            with self.subTest(case=label):
+                response = call()
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(
+                    response.json()["detail"],
+                    self.client.get("/rooms/none/messages").json()["detail"],
+                )
+
+    def test_other_users_room_receives_no_message(self):
+        """404로 막히는 데서 그치지 않고 실제로 아무것도 쓰이지 않아야 한다."""
+        room_id = self._create_room(user=_user("victim")).json()["id"]
+
+        self._authenticate(_user("attacker"))
+        self.client.post(f"/rooms/{room_id}/messages", json={"question": "침입"})
+
+        self._authenticate(_user("victim"))
+        messages = self.client.get(f"/rooms/{room_id}/messages").json()["messages"]
+        self.assertEqual(messages, [])
+
+    def test_room_endpoints_require_authentication(self):
+        room_id = self._create_room().json()["id"]
+        fastapi_app.dependency_overrides.pop(require_user, None)
+
+        for label, response in (
+            ("조회", self.client.get(f"/rooms/{room_id}/messages")),
+            ("전송", self.client.post(
+                f"/rooms/{room_id}/messages", json={"question": "안녕"}
+            )),
+            ("피드백", self.client.post(f"/rooms/{room_id}/feedback")),
+        ):
+            with self.subTest(case=label):
+                self.assertEqual(response.status_code, 401)
 
 
 class SendMessageTests(ApiTestCase):
@@ -216,6 +479,7 @@ class SendMessageTests(ApiTestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_message_to_unknown_room_is_404(self):
+        self._authenticate()
         response = self.client.post("/rooms/none/messages", json={"question": "안녕"})
         self.assertEqual(response.status_code, 404)
 
@@ -253,7 +517,8 @@ class FeedbackTests(ApiTestCase):
         self.assertEqual(body["category_scores"]["naturalness"], 24)
         self.assertEqual(body["issues"][0]["category"], "politeness")
         self.assertFalse(body["cached"])
-        self.assertEqual(mock_feedback.call_args.kwargs["user_id"], "u1")
+        # 방 주인은 토큰의 사용자다. 피드백도 그 id로 남는다.
+        self.assertEqual(mock_feedback.call_args.kwargs["user_id"], TEST_USER.id)
 
     @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요", autospec=True)
     @patch("app.routers.rooms.generate_feedback", return_value=_feedback_result())
@@ -273,6 +538,7 @@ class FeedbackTests(ApiTestCase):
         self.assertEqual(self.client.post(f"/rooms/{room_id}/feedback").status_code, 400)
 
     def test_feedback_of_unknown_room_is_404(self):
+        self._authenticate()
         self.assertEqual(self.client.post("/rooms/none/feedback").status_code, 404)
 
     def test_feedback_input_keeps_chat_as_json_data(self):
