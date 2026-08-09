@@ -1,9 +1,11 @@
 import base64
 import io
 import json
+import os
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -16,6 +18,8 @@ from app.core.auth import AuthUser, require_user
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import Base, get_db
 from app.main import app as fastapi_app
+from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
+from app.models.user import LearningGoal, UserLearningGoal, UserProfile
 from app.services.feedback import (
     CategoryScores,
     FeedbackIssue,
@@ -95,6 +99,10 @@ class ApiTestCase(unittest.TestCase):
         """
         fastapi_app.dependency_overrides[require_user] = lambda: user
         return user
+
+    def session(self):
+        """테스트가 카탈로그를 직접 손볼 때 쓰는 세션. 라우터가 쓰는 엔진과 같다."""
+        return sessionmaker(bind=self.engine, autoflush=False, expire_on_commit=False)()
 
     def _create_room(self, **overrides):
         payload = {
@@ -528,6 +536,313 @@ class ProfileTests(ApiTestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertTrue(self.client.get("/auth/me").json()["profile"]["push_enabled"])
+
+
+SUPABASE_TEST_ENV = {
+    "SUPABASE_URL": "https://test.supabase.co",
+    "SUPABASE_ANON_KEY": "anon-test-key",
+    "SUPABASE_SERVICE_ROLE_KEY": "service-test-key",
+}
+
+# Supabase signup 성공 응답(Confirm email OFF). 세션과 user가 함께 온다.
+SIGNUP_SESSION = {
+    "access_token": "tok-1",
+    "token_type": "bearer",
+    "refresh_token": "ref-1",
+    "expires_in": 3600,
+    "user": {
+        "id": "u-1",
+        "email": "a@b.c",
+        "role": "authenticated",
+        "identities": [{"id": "i-1"}],
+    },
+}
+
+
+def _install_supabase_env(case: unittest.TestCase) -> None:
+    """로컬 .env의 실제 Supabase 값을 테스트 값으로 덮어쓴다(urlopen 대역과 이중 안전장치)."""
+    env = patch.dict(os.environ, SUPABASE_TEST_ENV)
+    env.start()
+    case.addCleanup(env.stop)
+
+
+@contextmanager
+def _fake_supabase(response: bytes = b"{}", error: Exception | None = None):
+    """`app.core.auth.urlopen` 대역. 나간 요청을 기록하고 지정한 응답 본문을 돌려준다.
+
+    yield된 리스트에 urllib Request가 쌓인다. URL은 request.full_url로, 헤더는
+    request.headers["Authorization"]처럼 읽는다(urllib이 키 첫 글자를 대문자로 바꾼다).
+    """
+    requests: list = []
+
+    def fake_urlopen(request, *_args, **_kwargs):
+        requests.append(request)
+        if error is not None:
+            raise error
+        return io.BytesIO(response)
+
+    with patch("app.core.auth.urlopen", side_effect=fake_urlopen):
+        yield requests
+
+
+def _supabase_error(code: int, payload: dict) -> HTTPError:
+    """서버가 본문을 읽어 error_code를 해석할 수 있는 HTTPError."""
+    return HTTPError(
+        url="https://test.supabase.co/auth/v1/signup",
+        code=code,
+        msg="error",
+        hdrs=None,
+        fp=io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+
+class SignupTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        _install_supabase_env(self)
+
+    def _signup(self, email: str = "a@b.c", password: str = "secret-pw"):
+        return self.client.post("/auth/signup", json={"email": email, "password": password})
+
+    def test_signup_returns_session_tokens(self):
+        with _fake_supabase(json.dumps(SIGNUP_SESSION).encode("utf-8")):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 201, msg="AC-T1-SIGNUP-TOKEN")
+        body = response.json()
+        self.assertEqual(body["access_token"], "tok-1", msg="AC-T1-SIGNUP-TOKEN")
+        self.assertEqual(body["refresh_token"], "ref-1", msg="AC-T1-SIGNUP-TOKEN")
+        self.assertEqual(body["user"]["id"], "u-1", msg="AC-T1-SIGNUP-TOKEN")
+
+    def test_signup_duplicate_email_maps_to_409(self):
+        error = _supabase_error(
+            422, {"error_code": "user_already_exists", "msg": "User already registered"}
+        )
+        with _fake_supabase(error=error):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 409, msg="AC-T2-DUP-409")
+        self.assertEqual(response.json()["detail"], "이미 가입된 이메일입니다.")
+
+    def test_signup_hidden_duplicate_maps_to_409(self):
+        """Confirm email ON에서 Supabase는 중복 가입을 200 + identities=[]로 숨긴다."""
+        hidden = {"id": "u-1", "email": "a@b.c", "identities": []}
+        with _fake_supabase(json.dumps(hidden).encode("utf-8")):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 409, msg="AC-T2-DUP-409")
+
+    def test_signup_weak_password_maps_to_400(self):
+        error = _supabase_error(
+            422,
+            {"error_code": "weak_password", "msg": "Password should be at least 6 characters"},
+        )
+        with _fake_supabase(error=error):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 400, msg="AC-T3-WEAK-PW-400")
+        self.assertIn("비밀번호", response.json()["detail"], msg="AC-T3-WEAK-PW-400")
+
+    def test_signup_blank_fields_return_422_without_supabase_call(self):
+        for label, payload in (
+            ("공백 이메일", {"email": " ", "password": "secret-pw"}),
+            ("빈 비밀번호", {"email": "a@b.c", "password": ""}),
+        ):
+            with self.subTest(case=label), _fake_supabase() as requests:
+                response = self.client.post("/auth/signup", json=payload)
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(len(requests), 0)
+
+    def test_signup_unknown_rejection_maps_to_400(self):
+        """error_code가 없는 4xx 거부는 일반 폴백 문구의 400으로 매핑된다."""
+        with _fake_supabase(error=_supabase_error(400, {"msg": "signups not allowed"})):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "가입 요청이 거부되었습니다.")
+
+    def test_signup_connection_failure_maps_to_502(self):
+        with _fake_supabase(error=URLError("offline")):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 502)
+
+    def test_signup_without_session_returns_503(self):
+        """세션 없음 + identities 정상 = Confirm email ON 의심. 조용히 넘기지 않는다(A1)."""
+        confirm_on = {"id": "u-1", "identities": [{"id": "i-1"}]}
+        with _fake_supabase(json.dumps(confirm_on).encode("utf-8")):
+            response = self._signup()
+
+        self.assertEqual(response.status_code, 503)
+
+
+class DeleteAccountTests(ApiTestCase):
+    OTHER_USER_ID = "test-user-2"
+
+    def setUp(self):
+        super().setUp()
+        _install_supabase_env(self)
+
+    def _seed_user_data(self, user_id: str) -> None:
+        """프로필+학습 목표, 방+메시지+피드백을 한 사용자 몫으로 만든다(각 테이블 1행)."""
+        message_id = f"msg-{user_id}"
+        with self.session() as session:
+            session.add(
+                UserProfile(
+                    user_id=user_id,
+                    native_language="ko",
+                    learning_goals=[UserLearningGoal(goal=LearningGoal.TRAVEL)],
+                )
+            )
+            session.add(
+                ChatRoom(
+                    id=f"room-{user_id}",
+                    user_id=user_id,
+                    persona_id="doyun",
+                    name=f"{user_id}의 방",
+                    messages=[ChatMessage(id=message_id, role="user", content="야 뭐해")],
+                    feedbacks=[
+                        ChatFeedback(
+                            last_message_id=message_id,
+                            model="test-model",
+                            prompt_version="test-v1",
+                            score=80,
+                            result_json={},
+                        )
+                    ],
+                )
+            )
+            session.commit()
+
+    def _counts_for(self, user_id: str) -> dict[str, int]:
+        """다섯 테이블의 해당 사용자 행 수. 메시지·피드백은 시드가 만든 방 id로 센다."""
+        queries = {
+            "user_profiles": ("select count(*) from user_profiles where user_id = :key", user_id),
+            "user_learning_goals": (
+                "select count(*) from user_learning_goals where user_id = :key",
+                user_id,
+            ),
+            "chat_rooms": ("select count(*) from chat_rooms where user_id = :key", user_id),
+            "chat_messages": (
+                "select count(*) from chat_messages where room_id = :key",
+                f"room-{user_id}",
+            ),
+            "chat_feedbacks": (
+                "select count(*) from chat_feedbacks where room_id = :key",
+                f"room-{user_id}",
+            ),
+        }
+        with self.engine.connect() as conn:
+            return {
+                table: conn.execute(text(sql), {"key": key}).scalar_one()
+                for table, (sql, key) in queries.items()
+            }
+
+    def test_delete_purges_own_data_and_returns_204(self):
+        self._seed_user_data(TEST_USER.id)
+        self._seed_user_data(self.OTHER_USER_ID)
+        self._authenticate()
+
+        with _fake_supabase(b""):
+            response = self.client.delete("/auth/me")
+
+        self.assertEqual(response.status_code, 204, msg="AC-T4-PURGE-ALL")
+        for table, count in self._counts_for(TEST_USER.id).items():
+            with self.subTest(table=table):
+                self.assertEqual(count, 0, msg="AC-T4-PURGE-ALL")
+
+    def test_delete_keeps_other_users_data(self):
+        self._seed_user_data(TEST_USER.id)
+        self._seed_user_data(self.OTHER_USER_ID)
+        self._authenticate()
+
+        with _fake_supabase(b""):
+            self.client.delete("/auth/me")
+
+        counts = self._counts_for(self.OTHER_USER_ID)
+        for table in ("user_profiles", "chat_rooms", "chat_messages"):
+            with self.subTest(table=table):
+                self.assertEqual(counts[table], 1, msg="AC-T5-OTHERS-INTACT")
+
+    def test_delete_calls_admin_api_with_service_key(self):
+        self._seed_user_data(TEST_USER.id)
+        self._authenticate()
+
+        with _fake_supabase(b"") as requests:
+            response = self.client.delete("/auth/me")
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(len(requests), 1, msg="AC-T6-ADMIN-GATE")
+        request = requests[0]
+        self.assertEqual(request.get_method(), "DELETE", msg="AC-T6-ADMIN-GATE")
+        self.assertIn(
+            "/auth/v1/admin/users/" + TEST_USER.id, request.full_url, msg="AC-T6-ADMIN-GATE"
+        )
+        self.assertEqual(
+            request.headers.get("Authorization"),
+            "Bearer service-test-key",
+            msg="AC-T6-ADMIN-GATE",
+        )
+
+    def test_delete_rolls_back_when_admin_fails(self):
+        self._seed_user_data(TEST_USER.id)
+        self._authenticate()
+
+        with _fake_supabase(error=_supabase_error(500, {"msg": "boom"})):
+            response = self.client.delete("/auth/me")
+
+        self.assertEqual(response.status_code, 502, msg="AC-T6-ADMIN-GATE")
+        for table, count in self._counts_for(TEST_USER.id).items():
+            with self.subTest(table=table):
+                self.assertEqual(count, 1, msg="AC-T6-ADMIN-GATE")
+
+    def test_delete_without_service_key_returns_503(self):
+        self._seed_user_data(TEST_USER.id)
+        self._authenticate()
+        # patch.dict가 setUp에서 시작됐으므로 teardown 때 원래 값으로 복원된다.
+        os.environ.pop("SUPABASE_SERVICE_ROLE_KEY", None)
+
+        with _fake_supabase(b"") as requests:
+            response = self.client.delete("/auth/me")
+
+        self.assertEqual(response.status_code, 503, msg="AC-T7-KEY-503")
+        self.assertEqual(len(requests), 0, msg="AC-T7-KEY-503")
+        for table, count in self._counts_for(TEST_USER.id).items():
+            with self.subTest(table=table):
+                self.assertEqual(count, 1, msg="AC-T7-KEY-503")
+
+    def test_delete_without_token_returns_401(self):
+        """토큰 없이 탈퇴할 수 없다. (_authenticate를 부르지 않는다)"""
+        self.assertEqual(self.client.delete("/auth/me").status_code, 401)
+
+    def test_delete_when_account_already_gone_returns_204(self):
+        """Admin 404 = 이미 삭제된 계정. 멱등하게 성공으로 간주한다(A3)."""
+        self._seed_user_data(TEST_USER.id)
+        self._authenticate()
+
+        with _fake_supabase(error=_supabase_error(404, {"msg": "User not found"})):
+            response = self.client.delete("/auth/me")
+
+        self.assertEqual(response.status_code, 204)
+        for table, count in self._counts_for(TEST_USER.id).items():
+            with self.subTest(table=table):
+                self.assertEqual(count, 0)
+
+
+class OpenApiContractTests(unittest.TestCase):
+    def test_new_auth_routes_document_contract(self):
+        # app.openapi_schema가 이미 만들어졌으면 그대로 재사용된다 — 조회만 한다.
+        spec = fastapi_app.openapi()
+
+        self.assertIn("/auth/signup", spec["paths"], msg="AC-T9-OPENAPI-CONTRACT")
+        signup = spec["paths"]["/auth/signup"]["post"]
+        self.assertTrue(signup.get("summary"), msg="AC-T9-OPENAPI-CONTRACT")
+        self.assertTrue(signup.get("description"), msg="AC-T9-OPENAPI-CONTRACT")
+        self.assertIn("409", signup["responses"], msg="AC-T9-OPENAPI-CONTRACT")
+
+        withdraw = spec["paths"]["/auth/me"]["delete"]
+        self.assertTrue(withdraw.get("summary"), msg="AC-T9-OPENAPI-CONTRACT")
+        self.assertIn("401", withdraw["responses"], msg="AC-T9-OPENAPI-CONTRACT")
 
 
 if __name__ == "__main__":

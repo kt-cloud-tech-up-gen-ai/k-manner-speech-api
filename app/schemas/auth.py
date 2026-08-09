@@ -2,10 +2,15 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.models.user import Gender, LearningGoal, StudyFrequency
+
+# 앞뒤 공백을 걷어낸 뒤 비면 안 된다(app/schemas/rooms.py의 CatalogId 선례).
+# 이메일 형식·비밀번호 정책 검증은 Supabase에 위임하고 서버는 빈 값만 거른다.
+_NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class AuthUser(BaseModel):
@@ -14,6 +19,15 @@ class AuthUser(BaseModel):
     id: str
     email: str | None = None
     role: str | None = None
+
+
+class SignupRequest(BaseModel):
+    """회원가입 요청. email·password가 빈 문자열이거나 공백뿐이면 422로 거부한다."""
+
+    email: _NonBlankStr = Field(description="가입할 이메일. 형식 검증은 Supabase가 한다")
+    password: _NonBlankStr = Field(
+        description="비밀번호. 길이·복잡도 정책은 Supabase가 검증한다(위반 시 400)"
+    )
 
 
 class LoginResponse(BaseModel):
