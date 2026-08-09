@@ -99,7 +99,8 @@ cp .env.example .env
 | `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 서버 환경에만 저장합니다. |
 | `FEEDBACK_MODEL` | 선택 | 표현 피드백 모델. 기본값은 `gpt-5.6-luna`. |
 | `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |
-| `SUPABASE_ANON_KEY` | 인증 사용 시 | 공개용 클라이언트 키. 대시보드의 **Publishable key**(`sb_publishable_...`) 또는 Legacy API keys 탭의 anon 키(`eyJ...`). `SUPABASE_PUBLISHABLE_KEY`라는 이름으로 넣어도 됩니다. `service_role`/Secret 키는 사용 금지. |
+| `SUPABASE_ANON_KEY` | 인증 사용 시 | 공개용 클라이언트 키. 대시보드의 **Publishable key**(`sb_publishable_...`) 또는 Legacy API keys 탭의 anon 키(`eyJ...`). `SUPABASE_PUBLISHABLE_KEY`라는 이름으로 넣어도 됩니다. 이 자리에 `service_role`/Secret 키를 넣지 마세요. |
+| `SUPABASE_SERVICE_ROLE_KEY` | 회원 탈퇴 사용 시 | `service_role`(Secret) 키. `DELETE /auth/me`의 Supabase 계정 삭제에만 쓰입니다. 서버 환경변수로만 보관하고 클라이언트·로그·커밋에 노출 금지. 미설정 시 탈퇴 API만 503. |
 
 `SUPABASE_*`가 비어 있으면 `/auth/login` 등 인증 엔드포인트가 503을 반환합니다
 (나머지 API는 영향 없음). 값은 Supabase Dashboard > Project Settings > API 에서 확인합니다.
