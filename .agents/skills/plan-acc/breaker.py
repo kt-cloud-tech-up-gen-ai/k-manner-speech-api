@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -616,9 +617,19 @@ def run_command(cmd: str, cwd: Path, env: dict, timeout: int = DEFAULT_TIMEOUT):
         env=env,
         start_new_session=True,
     )
+    # start_new_session=True makes the child the leader of a new process group,
+    # so its PID is the PGID even if the short-lived shell exits immediately.
+    process_group = proc.pid
+    deadline = time.monotonic() + timeout
 
     chunks = []
     state = {"total": 0, "limit_hit": False}
+
+    def signal_process_group(sig) -> None:
+        try:
+            os.killpg(process_group, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def reader():
         while True:
@@ -632,32 +643,40 @@ def run_command(cmd: str, cwd: Path, env: dict, timeout: int = DEFAULT_TIMEOUT):
             state["total"] += len(chunk)
             if state["total"] > OUTPUT_LIMIT_BYTES and not state["limit_hit"]:
                 state["limit_hit"] = True
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                signal_process_group(signal.SIGKILL)
                 break
 
     t = threading.Thread(target=reader, daemon=True)
     t.start()
-    t.join(timeout)
 
     timed_out = False
-    if t.is_alive():
+    try:
+        proc.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
         timed_out = True
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
-        t.join(TERM_GRACE_SECONDS)
-        if t.is_alive():
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            t.join(10)
 
-    proc.wait()
+    if not timed_out:
+        t.join(max(0, deadline - time.monotonic()))
+        timed_out = t.is_alive()
+
+    if timed_out:
+        signal_process_group(signal.SIGTERM)
+        grace_deadline = time.monotonic() + TERM_GRACE_SECONDS
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=max(0, grace_deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+        t.join(max(0, grace_deadline - time.monotonic()))
+        if proc.poll() is None or t.is_alive():
+            signal_process_group(signal.SIGKILL)
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("Verify process survived SIGKILL") from exc
+        t.join(10)
+
     raw = b"".join(chunks)
     text = raw.decode("utf-8", errors="surrogateescape")
     text = normalize_output(text)
@@ -784,13 +803,45 @@ def resolve_git_dir(repo_root: Path) -> Optional[Path]:
 
 
 def build_git_env(env: dict, repo_root: Path, copy_root: Path) -> None:
-    """Only touches env when the original repo actually has a .git -- pointing
-    GIT_DIR at a nonexistent path would break any incidental git call inside
-    Verify."""
+    """Point Verify at an isolated clone while preserving the original index."""
     git_dir = resolve_git_dir(repo_root)
     if git_dir is None:
         return
-    env["GIT_DIR"] = str(git_dir)
+
+    isolated_repo = Path(env["TMPDIR"]).parent / "git-repo"
+    clone_env = dict(env)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        clone_env.pop(name, None)
+    try:
+        result = subprocess.run(
+            [
+                "git", "clone", "--quiet", "--no-checkout", "--no-hardlinks",
+                str(repo_root), str(isolated_repo),
+            ],
+            capture_output=True,
+            text=True,
+            env=clone_env,
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"failed to isolate Git metadata: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git clone exited {result.returncode}"
+        raise RuntimeError(f"failed to isolate Git metadata: {detail}")
+
+    result = subprocess.run(
+        ["git", "-C", str(isolated_repo), "remote", "remove", "origin"],
+        capture_output=True,
+        text=True,
+        env=clone_env,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git remote remove exited {result.returncode}"
+        raise RuntimeError(f"failed to detach isolated Git metadata: {detail}")
+
+    isolated_git_dir = isolated_repo / ".git"
+    env["GIT_DIR"] = str(isolated_git_dir)
     env["GIT_WORK_TREE"] = str(copy_root.resolve())
     env["GIT_OPTIONAL_LOCKS"] = "0"
     index_src = git_dir / "index"
@@ -1202,7 +1253,11 @@ def build_argparser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("plan", help="path to the plan markdown file")
-    p.add_argument("--repo", required=True, help="project repo root (read-only; all execution happens on temp copies)")
+    p.add_argument(
+        "--repo",
+        required=True,
+        help="project repo root (source and Git metadata execute from temp copies)",
+    )
     p.add_argument("--require-coverage", action="store_true",
                     help="also verify that test functions added since Base-SHA are referenced by a GUARDED AC block")
     p.add_argument("--repeat", type=int, default=DEFAULT_REPEAT,
