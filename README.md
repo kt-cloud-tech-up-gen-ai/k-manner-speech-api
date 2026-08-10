@@ -122,6 +122,129 @@ uvicorn app.main:app --reload
 
 ---
 
+## 팀 공용 스킬 (Codex · Claude Code)
+
+이 저장소의 개발 워크플로우를 `.agents/skills/`에 프로젝트 스킬로 함께 둡니다.
+별도 설치 없이 Codex CLI·IDE·앱과 Claude Code에서 같은 원본을 사용합니다.
+
+```
+.agents/skills/                     ← 스킬 원본 (단일 소스)
+├── plan-acc/
+│   ├── SKILL.md
+│   ├── breaker.py                  ← AC 검증 하네스
+│   └── templates/                  ← 아키타입별 질문지 6종
+├── sc-test-design/SKILL.md
+├── sc-tdd/SKILL.md
+├── sc-tdd-backend/SKILL.md
+└── sc-tdd-uiux/SKILL.md
+
+.claude/skills -> ../.agents/skills ← Claude Code가 같은 원본을 읽는 심링크
+AGENTS.md                            ← Codex용 저장소 지침과 기본 스킬 선택 규칙
+```
+
+`SKILL.md` 본문은 특정 모델명이나 Claude Code의 `Task`·`TodoWrite`에 의존하지 않습니다.
+Codex는 현재 세션의 파일·셸·계획 도구를 사용하고, Claude Code는 대응하는 자체 도구를 사용합니다.
+`.claude/plan-acc/`처럼 이름에 `claude`가 남은 경로는 기존 산출물 호환성을 위한 공유 작업
+경로이며 Codex도 그대로 씁니다.
+
+### Codex에서 사용하기
+
+Codex는 실행 위치부터 저장소 루트까지의 `.agents/skills/`를 자동 스캔합니다. 저장소 루트나
+그 하위 디렉터리에서 Codex를 열고 다음 중 하나로 사용합니다.
+
+- **명시 호출:** 프롬프트에서 `$`로 스킬을 지목합니다.
+
+  ```text
+  $plan-acc /rooms 즐겨찾기 기능을 가정 없이 기획하고 AC까지 작성해줘.
+  ```
+
+- **목록에서 선택:** Codex CLI/IDE에서 `/skills`를 실행하거나 `$`를 입력해 스킬을 고릅니다.
+- **자동 선택:** `SKILL.md`의 `description`과 요청이 맞으면 Codex가 스킬을 자동으로 선택할 수 있습니다.
+
+  ```text
+  /rooms 즐겨찾기 기능을 TDD로 구현해줘. 실패하는 테스트부터 확인해줘.
+  ```
+
+Codex는 스킬 변경을 자동 감지합니다. 목록에 갱신 내용이 보이지 않을 때만 Codex를 다시
+시작합니다. 같은 이름이 두 번 보이면 개인 경로(`~/.agents/skills`)에도 같은 스킬이 있는
+경우입니다. 선택 화면에서 이 저장소의 `.agents/skills/` 경로를 확인하세요.
+
+### Claude Code에서 사용하기
+
+Claude Code는 `.claude/skills` 심링크를 통해 같은 파일을 읽습니다. 스킬 이름을 슬래시
+명령으로 호출하거나 자연어 트리거를 사용합니다.
+
+```text
+/plan-acc "/rooms 즐겨찾기 기능 추가"
+```
+
+Codex의 명시 호출은 `$plan-acc`, Claude Code의 명시 호출은 `/plan-acc`입니다.
+예전 개인 설정에서 쓰던 `/sc:tdd-backend` 같은 콜론 명령은 이 저장소에 포함되지 않습니다.
+
+### 스킬별 역할과 호출명
+
+| 스킬 | 하는 일 | Codex | Claude Code |
+| --- | --- | --- | --- |
+| `plan-acc` | 가정 없이 질문을 먼저 해소하고 Given/When/Then AC와 breaker를 갖춘 계획을 만듭니다. | `$plan-acc` | `/plan-acc` |
+| `sc-test-design` | 구현 전에 What/Who/Why·GWT·Negative를 갖춘 테스트 케이스 명세를 설계하고 역할별로 리뷰합니다. | `$sc-test-design` | `/sc-test-design` |
+| `sc-tdd-backend` | 서버 사이드 red-green-refactor를 수행합니다. 이 저장소의 기본 구현 경로입니다. | `$sc-tdd-backend` | `/sc-tdd-backend` |
+| `sc-tdd` | 요청의 백엔드/UI 범위가 불명확할 때 분류한 뒤 전문 파이프라인으로 연결합니다. | `$sc-tdd` | `/sc-tdd` |
+| `sc-tdd-uiux` | 렌더링·인터랙션·접근성을 포함한 프론트엔드 TDD를 수행합니다. 이 백엔드 저장소에서는 보통 직접 쓰지 않습니다. | `$sc-tdd-uiux` | `/sc-tdd-uiux` |
+
+### 전형적인 흐름
+
+```text
+1. plan-acc          → 질문 해소 → AC가 포함된 계획서
+2. sc-test-design    → AC를 리뷰 가능한 테스트 케이스 명세로 변환
+3. sc-tdd-backend    → 실패 테스트 확인 → 최소 구현 → 품질 게이트
+```
+
+`sc-tdd-backend`와 `sc-tdd-uiux`는 자체 첫 단계에서 `sc-test-design`을 읽고 따르므로 3번부터
+명시 호출해도 테스트 설계 단계가 생략되지 않습니다.
+
+### 산출물 경로
+
+| 스킬 | 산출물 | 기본 커밋 여부 |
+| --- | --- | --- |
+| `plan-acc` | `.claude/plan-acc/{YYYY-MM-DD-HHmm}_{slug}.md` | 제외 |
+| `sc-test-design` | `.claude/test-design/{YYYY-MM-DD-HHmm}_{slug}.md` | 제외 |
+| `sc-test-design` | `.claude/test-roles.md` (없으면 기본 역할로 생성) | 제외 |
+
+이 경로들은 `.gitignore` 대상이라 개인 작업물로 남습니다. 팀에 공유해야 할 때만
+`git add -f <경로>`로 명시적으로 추가합니다.
+
+### 스킬을 수정하거나 추가할 때
+
+`.agents/skills/<이름>/SKILL.md`를 수정하거나 추가합니다. 두 도구가 다른 사본을 갖지 않도록
+`.claude/skills` 아래에는 직접 파일을 만들지 않습니다. Codex에서는 `$skill-creator`로 생성·수정
+작업을 요청할 수도 있습니다.
+
+```markdown
+---
+name: my-skill
+description: 무엇을 하는지와 언제 사용해야 하는지를 실제 트리거 문구와 함께 씁니다.
+---
+
+# my-skill
+
+(도구에 종속되지 않은 실행 절차)
+```
+
+공통 호환성을 위해 frontmatter는 `name`과 `description`만 사용합니다. `description`은 Codex가
+자동 선택할 때 보는 정보이므로 주요 용도와 `$my-skill`·`/my-skill` 같은 명시 호출 조건을 앞에
+둡니다. 자세한 형식은 [OpenAI의 Build skills 문서](https://learn.chatgpt.com/docs/build-skills)를
+참고하세요.
+
+### 알아둘 제약
+
+- Windows에서 Claude Code를 쓰면 `.claude/skills` 심링크가 일반 파일로 체크아웃될 수 있습니다.
+  `git config core.symlinks true` 후 다시 체크아웃하거나 `.agents/skills`를 `.claude/skills`로
+  복사하세요. Codex는 `.agents/skills/`를 직접 읽으므로 영향받지 않습니다.
+- `plan-acc`의 breaker는 저장소 루트에서 실행합니다:
+  `python3 .agents/skills/plan-acc/breaker.py <plan.md> --repo .`
+
+---
+
 ## API
 
 ### `GET /health`
