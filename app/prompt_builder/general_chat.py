@@ -1,6 +1,5 @@
 from app.prompt_builder.composer import PromptComposer
 
-
 composer = PromptComposer("app/prompts")
 
 # 프롬프트에 표시할 화자 이름. 여기 없는 role은 이력에서 제외한다.

@@ -3,7 +3,8 @@ from collections.abc import Iterator
 from enum import Enum
 from functools import lru_cache
 
-from sqlalchemy import Engine, Enum as SAEnum, create_engine
+from sqlalchemy import Engine, create_engine
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DEFAULT_DATABASE_URL = ""
@@ -47,17 +48,9 @@ def get_session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
 
 
-def init_db() -> None:
-    """모델 메타데이터 기준으로 테이블을 생성한다(마이그레이션 도구 미사용).
-
-    TODO(KAN-47/infra): 실제 PostgreSQL 인스턴스에 DATABASE_URL을 연결해 기동 검증 필요.
-      현재는 로컬 DB 없이 SQLite로만 테스트했다. (tests/test_new_apis.py)
-    TODO(KAN-47/infra): 스키마가 바뀌기 시작하면 create_all 대신 Alembic 마이그레이션으로 전환할 것.
-      create_all은 기존 테이블의 컬럼 변경을 반영하지 못한다.
-    """
-    from app.models import catalog, chat, user  # noqa: F401  테이블 등록 목적
-
-    Base.metadata.create_all(bind=get_engine())
+# 애플리케이션에서 스키마를 만드는 함수는 두지 않는다. 테이블 생성·변경은 Alembic만 한다
+# (이유는 app/main.py 상단 주석). 테스트는 자기 엔진에 직접 `Base.metadata.create_all`을
+# 부르므로 여기에 헬퍼가 필요하지 않다.
 
 
 def get_db() -> Iterator[Session]:

@@ -94,6 +94,7 @@ cp .env.example .env
 
 | 변수 | 필수 | 설명 |
 | --- | --- | --- |
+| `DATABASE_URL` | 선택 | 접속할 DB. 미설정 시 `postgresql+psycopg://postgres:postgres@localhost:5432/k_manner_speech`. **마이그레이션이 적용되는 대상이기도 하므로 값을 확인하고 실행하세요.** |
 | `GOOGLE_API_KEY` | 선택 | Gemini API 키. 먼저 확인합니다. |
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
 | `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 서버 환경에만 저장합니다. |
@@ -106,6 +107,39 @@ cp .env.example .env
 
 두 값 모두 비어 있으면 `/chat`은 LLM을 호출하지 않고
 `"질문에 대한 답변을 준비했습니다. {question}"` 형태의 기본 문구를 반환합니다.
+
+## 데이터베이스 마이그레이션
+
+스키마는 Alembic으로 관리합니다. **애플리케이션이 테이블을 만들지 않으므로, 서버를 띄우기
+전에 한 번은 적용해야 합니다.** 카탈로그 데이터(persona·시나리오·선택 가능한 조합)도
+마이그레이션에 시드로 들어 있어, 어느 환경이든 upgrade만 하면 같은 값이 채워집니다.
+
+```bash
+alembic current          # 지금 DB가 어느 리비전인지
+alembic upgrade head     # 최신까지 적용
+```
+
+- **저장소 루트에서 실행하세요.** `alembic.ini`가 루트에 있습니다.
+- 적용 대상은 `DATABASE_URL`이 가리키는 DB입니다. 원격 DB를 가리키고 있지 않은지 먼저
+  확인하세요 (`alembic current`가 어디에 붙는지도 같은 값을 따릅니다).
+- 되돌릴 때는 `alembic downgrade -1` (한 단계). 모든 리비전에 `downgrade()`가 있습니다.
+
+리비전 목록과 순서는 `alembic history`로 봅니다.
+
+### 적용 순서 주의
+
+`chat_rooms.status`·`turn_count`는 `server_default` 없이 NOT NULL입니다. 즉 **이 컬럼을 모르는
+구 버전 코드가 붙어 있는 DB에 적용하면 채팅방 생성이 실패합니다.** 서비스가 떠 있는 DB에
+적용할 때는 코드 배포와 함께 진행하거나, 해당 리비전에 `server_default`를 추가하세요.
+
+### DBA에게 SQL만 넘겨야 할 때
+
+```bash
+alembic upgrade <현재리비전>:head --sql > migration.sql
+```
+
+접속 없이 SQL만 렌더합니다. 단 **SQLite로는 안 됩니다**(batch 연산이 테이블 반영을 요구).
+`DATABASE_URL`이 PostgreSQL을 가리킬 때만 동작합니다.
 
 ## 실행
 
@@ -300,13 +334,355 @@ LLM 호출 중 예외가 발생하면 HTTP 500 대신
 > 이 엔드포인트는 **무상태(stateless)** 입니다. 대화 이력을 저장하지 않으며,
 > 매 요청마다 프롬프트를 새로 합성해 단일 메시지로 전송합니다.
 
+### 카탈로그 (`/personas`, `/scenarios`)
+
+대화 상대와 상황 목록입니다. 출처는 DB이며 값은 마이그레이션 시드로 들어갑니다
+(→ [데이터베이스 마이그레이션](#데이터베이스-마이그레이션)).
+
+**목록과 단건이 담는 값이 다릅니다.** 목록은 *고르기 위한 정보*만, 단건은 *고른 뒤에 필요한
+정보*까지 줍니다. 나눈 기준은 분량이 아니라 변경 속도입니다 — `communication_goal`·
+`max_turns`처럼 프롬프트 규칙이 바뀔 때 함께 바뀌는 값이 목록에 섞이면, 내부 규칙을 손볼
+때마다 목록 화면의 계약이 흔들립니다.
+
+> 아래 예제는 `alembic upgrade head`만 적용한 DB에서 그대로 받은 응답입니다. SQLite로
+> 뽑았기 때문에 `version`의 표기가 행마다 다릅니다(`...Z` / 오프셋 없음). SQLite는 컬럼에
+> 타임존을 보존하지 않습니다. 운영 DB는 `timestamptz`이므로 모두 오프셋이 붙어 돌아옵니다.
+
+#### `GET /personas`
+
+```bash
+curl http://127.0.0.1:8000/personas
+```
+
+```json
+{
+  "personas": [
+    {
+      "id": "doyun",
+      "first_name": "도윤",
+      "middle_name": null,
+      "last_name": null,
+      "age": 22,
+      "gender": "male",
+      "description": "도윤 / 캠퍼스 훈남 / 처음 만난 또래"
+    }
+  ]
+}
+```
+
+`age`와 `gender`는 화면 표시용이 아니라 **말투를 정하는 값**입니다. 사용자와의 나이 차가
+존댓말/반말을 가릅니다.
+
+#### `GET /personas/{persona_id}`
+
+상대 단건입니다. **고를 수 있는 시나리오 목록이 함께 실립니다.** 상대를 고른 화면에서 곧바로
+상황을 고를 수 있도록 한 번에 내려 줍니다.
+
+```bash
+curl http://127.0.0.1:8000/personas/doyun
+```
+
+```json
+{
+  "id": "doyun",
+  "first_name": "도윤",
+  "middle_name": null,
+  "last_name": null,
+  "age": 22,
+  "gender": "male",
+  "description": "도윤 / 캠퍼스 훈남 / 처음 만난 또래",
+  "relationship_description": "같은 캠퍼스에서 오늘 처음 만난 또래",
+  "voice_id": null,
+  "version": "2026-08-07T00:00:00Z",
+  "scenarios": [
+    {
+      "id": "campus_directions",
+      "description": "캠퍼스에서 처음 만난 또래에게 교무처 위치를 묻는 대화",
+      "time_context": "평일 오후",
+      "place_context": "캠퍼스 중앙 광장"
+    },
+    {
+      "id": "interview",
+      "description": "면접 상황 대화 연습",
+      "time_context": "평일 오전",
+      "place_context": "회사 회의실"
+    },
+    {
+      "id": "roleplay",
+      "description": "지정한 캐릭터와의 역할극 대화",
+      "time_context": null,
+      "place_context": null
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `relationship_description` | string | 사용자와 이 상대의 관계. 호칭과 존대 수준을 정합니다. |
+| `voice_id` | string \| null | ElevenLabs 음성 id. `null`이면 `ELEVENLABS_VOICE_ID` 기본 음성을 씁니다. |
+| `version` | datetime | 정의가 마지막으로 바뀐 시각. 클라이언트 캐시 무효화에 씁니다. |
+| `scenarios` | array | **이 상대로 고를 수 있는 시나리오.** id 오름차순. 원소는 목록과 같은 요약 형태입니다. |
+
+`scenarios`가 빈 배열이면 이 상대로 준비된 상황이 아직 없다는 뜻입니다. 오류가 아닙니다.
+
+**여기 없는 조합으로 `POST /rooms`를 호출하면 400입니다.**
+
+```json
+{
+  "detail": "고를 수 없는 조합입니다: persona=doyun, scenario=unpaired. GET /personas/doyun 의 scenarios 목록에서 고르세요."
+}
+```
+
+`scenario_id`를 보내지 않으면 조합 자체가 없으므로 검사하지 않습니다(상대만으로 만드는
+방은 그대로 허용).
+
+#### `GET /scenarios`
+
+```bash
+curl http://127.0.0.1:8000/scenarios
+```
+
+```json
+{
+  "scenarios": [
+    {
+      "id": "campus_directions",
+      "description": "캠퍼스에서 처음 만난 또래에게 교무처 위치를 묻는 대화",
+      "time_context": "평일 오후",
+      "place_context": "캠퍼스 중앙 광장"
+    },
+    {
+      "id": "interview",
+      "description": "면접 상황 대화 연습",
+      "time_context": "평일 오전",
+      "place_context": "회사 회의실"
+    },
+    {
+      "id": "roleplay",
+      "description": "지정한 캐릭터와의 역할극 대화",
+      "time_context": null,
+      "place_context": null
+    }
+  ]
+}
+```
+
+`time_context`·`place_context`는 배경 묘사라 없을 수 있습니다. `null`이면 화면에 표시하지
+않으면 됩니다.
+
+#### `GET /scenarios/{scenario_id}`
+
+시나리오 단건입니다. 대화 진행 규칙과 **이 상황을 연습할 수 있는 상대 목록**이 함께 실립니다.
+
+```bash
+curl http://127.0.0.1:8000/scenarios/campus_directions
+```
+
+```json
+{
+  "id": "campus_directions",
+  "description": "캠퍼스에서 처음 만난 또래에게 교무처 위치를 묻는 대화",
+  "time_context": "평일 오후",
+  "place_context": "캠퍼스 중앙 광장",
+  "communication_goal": "교무처 위치를 정중하게 묻고 안내를 끝까지 확인한다",
+  "end_condition": "교무처 위치를 안내받고 감사 인사를 하면 종료",
+  "max_turns": 10,
+  "version": "2026-08-08T00:00:00",
+  "personas": [
+    {
+      "id": "doyun",
+      "first_name": "도윤",
+      "middle_name": null,
+      "last_name": null,
+      "age": 22,
+      "gender": "male",
+      "description": "도윤 / 캠퍼스 훈남 / 처음 만난 또래"
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `communication_goal` | string | 사용자가 달성해야 하는 의사소통 목표. **표현 피드백의 채점 기준이 됩니다.** |
+| `end_condition` | string | 대화를 끝내도 되는 조건. 충족하고 끝나면 방 상태가 `completed`입니다. |
+| `max_turns` | int | 턴 상한. 왕복 1회를 1턴으로 셉니다. 여기 도달했는데 `end_condition`을 못 채우면 방 상태가 `failed`가 됩니다. |
+| `personas` | array | 이 상황을 연습할 수 있는 상대. id 오름차순. |
+
+시나리오가 턴 상한에서 대화를 매듭짓는 대사(`turn_limit_exit_line`)는 **응답에 넣지
+않습니다.** 그 말은 대화 메시지로 전달되므로 카탈로그로 미리 내려 줄 이유가 없습니다.
+
+#### 오류
+
+| 상황 | 응답 |
+| --- | --- |
+| 없는 `persona_id` / `scenario_id` | `404` — `{"detail": "알 수 없는 persona입니다: ghost"}` |
+
+id는 대소문자와 앞뒤 공백을 관대하게 받습니다(`DOYUN`, `  Doyun  ` 모두 같은 상대).
+
+### 채팅방 (`/rooms`)
+
+**이 계열은 전부 로그인이 필요합니다(Bearer).** 방 주인은 토큰이 정합니다 — 요청 본문이나
+쿼리 파라미터로 `user_id`를 받지 않습니다. `room_id`로 접근하는 엔드포인트는 **남의 방과
+없는 방에 똑같이 404**를 줍니다. 403으로 나누면 응답만으로 그 방이 실재한다는 사실이 새기
+때문입니다.
+
+> 아래 예제도 실제 응답입니다. 목록·내역 응답의 `created_at`에 오프셋(`Z`)이 없는 것은
+> SQLite로 뽑았기 때문입니다(자세한 이유는 [카탈로그 절](#카탈로그-personas-scenarios)).
+
+#### `POST /rooms`
+
+```bash
+curl -X POST http://127.0.0.1:8000/rooms \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"persona_id": "doyun", "scenario_id": "campus_directions", "name": "교무처 찾기"}'
+```
+
+```json
+{
+  "id": "22e707aed0e24e7b84747232a9eb0447",
+  "user_id": "8b1f...",
+  "persona_id": "doyun",
+  "scenario_id": "campus_directions",
+  "name": "교무처 찾기",
+  "created_at": "2026-08-08T14:04:43.184854Z"
+}
+```
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `persona_id` | ✅ | 대화 상대. 대소문자·앞뒤 공백은 관대하게 받고 카탈로그의 id로 저장됩니다. |
+| `scenario_id` | | **생략하거나 `null`이면 자유 대화방**입니다. 턴 상한도 종료 조건도 없이 계속 대화합니다. |
+| `name` | ✅ | 방 이름. |
+
+**`scenario_id`를 보낼 때는 그 상대로 고를 수 있는 조합이어야 합니다.**
+`GET /personas/{persona_id}`의 `scenarios` 목록이 그 범위입니다.
+
+```json
+{
+  "detail": "고를 수 없는 조합입니다: persona=doyun, scenario=cafe_order. GET /personas/doyun 의 scenarios 목록에서 고르세요."
+}
+```
+
+**자유 대화방은 상대마다 하나**입니다. 상대가 N명이면 최대 N개를 가질 수 있습니다.
+이미 있는데 또 만들면 409와 함께 기존 방의 id를 알려 줍니다.
+
+```json
+{
+  "detail": "이미 이 상대와의 자유 대화방이 있습니다: room_id=93aabd61b85543f19f7aa8322224d6e4. 시나리오 없는 방은 상대마다 하나만 만들 수 있습니다."
+}
+```
+
+| 상황 | 응답 |
+| --- | --- |
+| 토큰 없음·만료 | `401` |
+| 없는 `persona_id` / `scenario_id` | `400` — `{"detail": "알 수 없는 persona입니다: ghost"}` |
+| 고를 수 없는 조합 | `400` |
+| 자유 대화방 중복 | `409` |
+| `persona_id`·`scenario_id`가 빈 문자열이거나 공백뿐 | `422` |
+
+마지막 줄이 중요합니다. **시나리오를 고르지 않겠다는 뜻은 필드를 생략하거나 `null`을 보내는
+것**이며, 빈 문자열은 잘못된 요청으로 거부됩니다.
+
+#### `GET /rooms`
+
+내 방 목록을 최신 생성순으로 반환합니다. 파라미터는 없습니다.
+
+```bash
+curl http://127.0.0.1:8000/rooms -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "rooms": [
+    {
+      "id": "93aabd61b85543f19f7aa8322224d6e4",
+      "user_id": "8b1f...",
+      "persona_id": "doyun",
+      "scenario_id": null,
+      "name": "도윤과 수다",
+      "created_at": "2026-08-08T14:04:43.189749"
+    }
+  ]
+}
+```
+
+#### `POST /rooms/{room_id}/messages`
+
+```bash
+curl -X POST http://127.0.0.1:8000/rooms/<room_id>/messages \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"question": "교무처가 어디예요?"}'
+```
+
+```json
+{
+  "answer": "교무처는 본관 2층에 있어.",
+  "message": {
+    "id": "d0559f4176b246d8ad3daee831f41369",
+    "role": "assistant",
+    "content": "교무처는 본관 2층에 있어.",
+    "created_at": "2026-08-08T14:04:43.206867Z"
+  }
+}
+```
+
+사용자 메시지를 저장하고, 방의 persona와 최근 50건 이력으로 답변을 만들어 함께 저장합니다.
+응답의 `message`는 **persona 쪽 메시지**입니다.
+
+> **아직 시나리오가 대화에 반영되지 않습니다.** `scenario_id`는 저장만 되고 프롬프트에는
+> 들어가지 않아, 시나리오가 있는 방과 자유 대화방의 프롬프트가 현재 동일합니다.
+> `max_turns` 같은 값도 아직 대화에 영향을 주지 않습니다
+> (`app/routers/rooms.py`의 `TODO(KAN-59/KAN-65)`).
+> `communication_goal`은 예외로, 대화 프롬프트가 아니라
+> [표현 피드백](#post-roomsroom_idfeedback)의 채점 입력으로만 쓰입니다.
+
+#### `GET /rooms/{room_id}/messages`
+
+오래된 순으로 전체 내역을 반환합니다.
+
+```json
+{
+  "messages": [
+    {
+      "id": "af33d8f3f85e474b9140860582544445",
+      "role": "user",
+      "content": "교무처가 어디예요?",
+      "created_at": "2026-08-08T14:04:43.205799"
+    },
+    {
+      "id": "d0559f4176b246d8ad3daee831f41369",
+      "role": "assistant",
+      "content": "교무처는 본관 2층에 있어.",
+      "created_at": "2026-08-08T14:04:43.206867"
+    }
+  ]
+}
+```
+
+#### `DELETE /rooms/{room_id}`
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/rooms/<room_id> -H "Authorization: Bearer <token>"
+```
+
+성공하면 `204`, 본문은 없습니다. **대화 내역과 피드백도 함께 사라지며 되돌릴 수 없습니다**
+— 숨김 처리가 아니라 실제 삭제입니다. 자유 대화방을 지우면 그 상대의 자리가 비어 같은
+상대로 다시 만들 수 있습니다.
+
 ### `POST /rooms/{room_id}/feedback`
 
 채팅방의 최근 대화에서 사용자 발화만 평가합니다. 상대 발화, persona, scenario는
 맥락으로 사용하며 높임법·예의·상황 적합성·자연스러움을 각각 25점으로 평가합니다.
+시나리오가 있는 방은 그 시나리오의 `communication_goal`을 함께 보내며, 상황 적합성
+점수는 이 목표에 맞는 표현인지로 판단합니다(자유 대화방은 목표 없이 평가합니다).
+
+로그인이 필요하며 내 방만 평가합니다(남의 방·없는 방 모두 `404`).
 
 ```bash
-curl -X POST http://127.0.0.1:8000/rooms/<room_id>/feedback
+curl -X POST http://127.0.0.1:8000/rooms/<room_id>/feedback \
+  -H "Authorization: Bearer <token>"
 ```
 
 ```json
@@ -335,7 +711,9 @@ curl -X POST http://127.0.0.1:8000/rooms/<room_id>/feedback
 ```
 
 같은 마지막 메시지·모델·프롬프트 버전 조합의 결과는 `chat_feedbacks`에서 재사용하며,
-이 경우 `cached`가 `true`입니다.
+이 경우 `cached`가 `true`입니다. LLM에 넣는 내용(지시문·입력 값)이 바뀌면 프롬프트 버전을
+올리므로, 이전 버전으로 저장된 결과는 재사용되지 않고 다시 채점됩니다
+(현재 `expression-feedback-v2`).
 
 ### `GET /auth/me`
 
@@ -459,6 +837,30 @@ routers  ->  services  ->  core
 
 **routers는 services를 import하지만 그 반대는 없다.** 이 방향이 뒤집히면
 라우터 파일 하나를 고칠 때 서비스 계층이 함께 흔들린다.
+
+### 데이터 모델
+
+테이블은 마이그레이션이 만듭니다(→ [데이터베이스 마이그레이션](#데이터베이스-마이그레이션)).
+
+| 테이블 | 역할 |
+| --- | --- |
+| `personas` | 대화 상대 카탈로그. id는 `"doyun"`처럼 사람이 읽는 자연키. |
+| `scenarios` | 상황 카탈로그. 목표·종료 조건·턴 상한을 갖는다. |
+| `persona_scenarios` | **어떤 상대로 어떤 상황을 고를 수 있는지.** N:N 매핑이며 복합 PK `(persona_id, scenario_id)`. 여기 없는 조합으로는 방을 만들 수 없다. |
+| `chat_rooms` | 채팅방. 주인(`user_id`)·상대·상황과 진행 상태를 가진다. |
+| `chat_messages` | 대화 내역. 방을 지우면 함께 삭제된다. |
+| `chat_feedbacks` | 표현 피드백 결과. 방을 지우면 함께 삭제된다. |
+| `user_profiles`, `user_learning_goals` | 온보딩 설정. |
+
+`chat_rooms`에는 제약이 둘 있습니다.
+
+- `ck_chat_rooms_status` — 진행 상태는 `in_progress` / `completed` / `failed` / `abandoned`
+  넷 중 하나. `failed`는 턴 상한에 도달했는데 종료 조건을 못 채운 경우입니다.
+- `uq_chat_rooms_free_talk` — `WHERE scenario_id IS NULL`이 붙은 **부분** 유니크 인덱스로,
+  자유 대화방을 사용자-상대 당 하나로 묶습니다. 시나리오가 있는 방은 대상이 아니라
+  같은 조합으로 몇 개든 만들 수 있습니다.
+
+`user_id`는 Supabase `auth.users`의 id이며 스키마 소유가 달라 FK를 걸지 않습니다(논리 참조).
 
 ### models와 schemas를 왜 나누나
 

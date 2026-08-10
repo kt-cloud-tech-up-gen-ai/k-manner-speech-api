@@ -14,7 +14,8 @@ from enum import Enum
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.db import Base, enum_column as _enum_column
+from app.core.db import Base
+from app.core.db import enum_column as _enum_column
 
 
 def _now() -> datetime:
