@@ -1,6 +1,6 @@
 """대화 상대(persona) / 시나리오(mode) 카탈로그 모델.
 
-이 두 테이블이 카탈로그의 SSOT다. 값의 의미와 API 노출 형태는
+이 두 테이블과 둘을 잇는 `persona_scenarios`가 카탈로그의 SSOT다. 값의 의미와 API 노출 형태는
 `app/schemas/catalog.py`의 DTO가, 각 값이 없을 때/있을 때의 동작은
 `tests/test_catalog_model.py`와 `tests/test_catalog_service.py`가 규정한다.
 
@@ -10,8 +10,8 @@ id는 URL·요청 본문에 그대로 실리는 사람이 읽는 식별자(예: 
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, enum_column
 from app.models.user import Gender
@@ -22,6 +22,31 @@ _ID_LENGTH = 64
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# persona ↔ scenario는 N:N이다. 한 상대와 여러 상황을 연습할 수 있고, 같은 상황을
+# 여러 상대와 연습할 수 있다. 이 표에 없는 조합은 "그 상대로는 아직 준비되지 않은 상황"이며
+# 채팅방 생성이 거부된다(연결 컬럼 외 속성이 없어 ORM 클래스 없이 Core Table로 둔다).
+#
+# 카탈로그 행이 사라지면 이 매핑이 가리킬 곳이 없어지므로 chat_rooms와 같은 RESTRICT를 쓴다.
+# 단, RESTRICT는 DB 계층 제약이라 SQL DELETE에만 걸린다. ORM으로 persona/scenario를
+# 지우면 SQLAlchemy가 secondary 행을 먼저 정리하므로 제약에 닿지 않는다.
+persona_scenarios = Table(
+    "persona_scenarios",
+    Base.metadata,
+    Column(
+        "persona_id",
+        String(_ID_LENGTH),
+        ForeignKey("personas.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+    Column(
+        "scenario_id",
+        String(_ID_LENGTH),
+        ForeignKey("scenarios.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+)
 
 
 class Persona(Base):
@@ -59,6 +84,14 @@ class Persona(Base):
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
     )
 
+    # 이 상대로 고를 수 있는 시나리오. persona 상세 응답에 그대로 실린다.
+    # id 오름차순은 목록 API(`list_scenarios`)와 같은 순서를 보장하기 위한 것이다.
+    scenarios: Mapped[list["Scenario"]] = relationship(
+        secondary=persona_scenarios,
+        back_populates="personas",
+        order_by="Scenario.id",
+    )
+
 
 class Scenario(Base):
     """대화 시나리오(모드). `chat_rooms.scenario_id`는 선택값이라 방 쪽에서 nullable.
@@ -84,8 +117,19 @@ class Scenario(Base):
     end_condition: Mapped[str] = mapped_column(Text, nullable=False)
     # 턴 상한. 종료 조건이 걸리지 않아도 이 턴 수에서 대화를 마무리한다.
     max_turns: Mapped[int] = mapped_column(Integer, nullable=False)
+    # max_turns에 도달했는데 종료 조건을 못 채웠을 때 persona가 대화를 매듭짓는 말
+    # (예: "수업 시간이 되어서 가봐야 해"). 이때 방은 FAILED가 된다.
+    # 없으면 이 시나리오에 전용 마무리 대사가 없다는 뜻이다.
+    turn_limit_exit_line: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 시나리오 정의가 바뀐 시각. Persona.version과 같은 규칙.
     version: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+    # 이 상황을 연습할 수 있는 상대. scenario 상세 응답에 그대로 실린다.
+    personas: Mapped[list[Persona]] = relationship(
+        secondary=persona_scenarios,
+        back_populates="scenarios",
+        order_by=Persona.id,
     )

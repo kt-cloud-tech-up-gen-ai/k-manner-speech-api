@@ -17,6 +17,19 @@ DB 컬럼(`app/models/catalog.py`)과 필드가 겹치지만 목적이 다르다
 `relationship_description`도 같은 이유로 단건에 둔다. 화면에 쓸 수는 있지만 본래 목적은
 프롬프트의 호칭·존대 수준 결정이다.
 
+`scenarios.turn_limit_exit_line`은 어느 DTO에도 넣지 않는다. 턴 상한에서 persona가 할 말은
+대화 메시지로 전달되므로 카탈로그 응답으로 미리 내려 줄 이유가 없다.
+
+## 상세 응답의 상호 임베드
+
+persona 상세에는 고를 수 있는 시나리오 목록이, 시나리오 상세에는 그 상황을 연습할 수 있는
+상대 목록이 실린다. 양쪽 모두 **요약 DTO**를 담는다. 상세를 담으면 서로를 무한히 참조한다.
+
+## 정의 순서
+
+요약 DTO 둘을 파일 맨 위에 둔다. 상세 DTO가 반대쪽 요약을 필드 타입으로 쓰기 때문에,
+순서가 뒤바뀌면 임포트 시점에 이름을 찾지 못한다.
+
 ## 필수/선택
 
 DB의 NOT NULL과 일치시킨다. 선택값(`| None`)은 "아직 안 정해짐"이 아니라
@@ -46,6 +59,19 @@ class PersonaSummaryResponse(BaseModel):
     description: str = Field(description="목록 화면에 보여 주는 한 줄 소개")
 
 
+class ScenarioSummaryResponse(BaseModel):
+    """시나리오 목록의 원소. 어떤 상황인지 알아보는 데 필요한 값만 담는다."""
+
+    id: str = Field(description="채팅방 생성 시 scenario_id로 그대로 보내는 식별자")
+    description: str = Field(description="목록 화면에 보여 주는 한 줄 소개")
+    time_context: str | None = Field(
+        default=None, description="시간 배경. 없으면 시간을 표시하지 않는다"
+    )
+    place_context: str | None = Field(
+        default=None, description="공간 배경. 없으면 장소를 표시하지 않는다"
+    )
+
+
 class PersonaResponse(PersonaSummaryResponse):
     """대화 상대 단건. 대화를 시작한 뒤에 필요한 값까지 포함한다."""
 
@@ -59,23 +85,16 @@ class PersonaResponse(PersonaSummaryResponse):
     version: datetime = Field(
         description="정의가 마지막으로 바뀐 시각. 클라이언트 캐시 무효화에 쓴다"
     )
+    scenarios: list[ScenarioSummaryResponse] = Field(
+        description=(
+            "이 상대로 고를 수 있는 시나리오. id 오름차순. 빈 배열이면 아직 준비된 상황이"
+            " 없다는 뜻이다. 여기 없는 조합으로 채팅방을 만들면 400이다"
+        )
+    )
 
 
 class PersonaListResponse(BaseModel):
     personas: list[PersonaSummaryResponse]
-
-
-class ScenarioSummaryResponse(BaseModel):
-    """시나리오 목록의 원소. 어떤 상황인지 알아보는 데 필요한 값만 담는다."""
-
-    id: str = Field(description="채팅방 생성 시 scenario_id로 그대로 보내는 식별자")
-    description: str = Field(description="목록 화면에 보여 주는 한 줄 소개")
-    time_context: str | None = Field(
-        default=None, description="시간 배경. 없으면 시간을 표시하지 않는다"
-    )
-    place_context: str | None = Field(
-        default=None, description="공간 배경. 없으면 장소를 표시하지 않는다"
-    )
 
 
 class ScenarioResponse(ScenarioSummaryResponse):
@@ -90,6 +109,9 @@ class ScenarioResponse(ScenarioSummaryResponse):
     )
     version: datetime = Field(
         description="정의가 마지막으로 바뀐 시각. 클라이언트 캐시 무효화에 쓴다"
+    )
+    personas: list[PersonaSummaryResponse] = Field(
+        description="이 상황을 연습할 수 있는 상대. id 오름차순"
     )
 
 

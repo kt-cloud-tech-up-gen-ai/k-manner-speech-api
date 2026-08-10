@@ -14,12 +14,30 @@ Create Date: 2026-08-07
 3번 전에 고아 참조를 검사한다. 카탈로그에 없는 persona_id/scenario_id를 가진 방이
 남아 있으면 FK 추가가 실패하므로, 어떤 값이 문제인지 먼저 드러내고 중단한다.
 어떻게 정리할지(시드 추가 / 방 삭제)는 사람이 판단할 몫이다.
+
+## 오프라인(`alembic upgrade --sql`) 대응
+
+이 리비전은 DBA에게 넘길 SQL 스크립트를 뽑는 경로에서 두 가지로 깨져 있었고, 후행
+리비전 `d5b8c07f9a13`·`e7a2f4c81b09`가 이미 쓰고 있는 방식으로 맞췄다. 온라인 실행에
+들어가는 값과 순서는 그대로다.
+
+1. 시드 INSERT: `op.get_bind().execute(text, params)`는 오프라인에서 파라미터가
+   바인딩되지 않아 `VALUES (NULL, NULL, ...)`로 렌더된다. 조용히 잘못된 스크립트가
+   나오므로 값을 문장에 묶어 두는 `op.execute(text(...).bindparams(...))`를 쓴다.
+2. 고아 참조 검사: 오프라인의 `connection.execute()`는 None을 돌려주므로 결과를 읽는
+   검사가 성립하지 않는다(AttributeError로 죽는다). `context.is_offline_mode()`로 건너뛴다.
+
+`version`에 `sa.DateTime(timezone=True)`를 명시하는 이유는 `d5b8c07f9a13`에 적힌 것과
+같다. bindparams에 문자열을 넘기면 psycopg가 `$N::VARCHAR`로 렌더하고 PostgreSQL이
+timestamptz로 암묵 변환하지 않아 DatatypeMismatch가 난다. 타입만 붙이고 값을 문자열로
+두면 이번엔 SQLite가 거부하므로 값도 `datetime`이어야 한다.
 """
 
+from datetime import datetime, timezone
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 # revision identifiers, used by Alembic.
 revision: str = "9c1f4b0a7d52"
@@ -28,7 +46,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 # 시드 행의 version. 마이그레이션은 재현 가능해야 하므로 실행 시각이 아니라 상수를 쓴다.
-SEEDED_AT = "2026-08-07 00:00:00+00:00"
+SEEDED_AT = datetime(2026, 8, 7, tzinfo=timezone.utc)
 
 # 카탈로그 초기 데이터. 이 상수가 곧 출처이며, 이후 변경은 새 리비전이나 관리 API로 한다.
 # 리비전은 한 번 배포되면 고정이므로 여기 값을 나중에 고쳐서는 안 된다.
@@ -96,9 +114,11 @@ def _enum(values: Sequence[str], constraint_name: str) -> sa.Enum:
 
 def _assert_no_orphan_references(connection: sa.Connection) -> None:
     for column, table in (("persona_id", "personas"), ("scenario_id", "scenarios")):
+        # noqa 사유: 보간하는 것은 값이 아니라 컬럼·테이블 이름이라 바인드 파라미터로
+        # 넘길 수 없다. 두 값 모두 바로 위 튜플의 리터럴이며 외부 입력이 섞이지 않는다.
         orphans = connection.execute(
             sa.text(
-                f"SELECT DISTINCT {column} FROM chat_rooms"
+                f"SELECT DISTINCT {column} FROM chat_rooms"  # noqa: S608
                 f" WHERE {column} IS NOT NULL"
                 f" AND {column} NOT IN (SELECT id FROM {table})"
             )
@@ -195,31 +215,39 @@ def upgrade() -> None:
             "ix_chat_feedbacks_room_id_created_at", ["room_id", "created_at"], unique=False
         )
 
-    connection = op.get_bind()
     for row in PERSONA_SEED:
-        connection.execute(
+        op.execute(
             sa.text(
                 "INSERT INTO personas"
                 " (id, first_name, age, gender, description,"
                 "  relationship_description, voice_id, version)"
                 " VALUES (:id, :first_name, :age, :gender, :description,"
                 "  :relationship_description, :voice_id, :version)"
-            ),
-            {**row, "version": SEEDED_AT},
+            ).bindparams(
+                sa.bindparam("version", SEEDED_AT, type_=sa.DateTime(timezone=True)),
+                **row,
+            )
         )
     for row in SCENARIO_SEED:
-        connection.execute(
+        op.execute(
             sa.text(
                 "INSERT INTO scenarios"
                 " (id, description, time_context, place_context,"
                 "  communication_goal, end_condition, max_turns, version)"
                 " VALUES (:id, :description, :time_context, :place_context,"
                 "  :communication_goal, :end_condition, :max_turns, :version)"
-            ),
-            {**row, "version": SEEDED_AT},
+            ).bindparams(
+                sa.bindparam("version", SEEDED_AT, type_=sa.DateTime(timezone=True)),
+                **row,
+            )
         )
 
-    _assert_no_orphan_references(connection)
+    # 오프라인(`alembic upgrade --sql`)에서는 건너뛴다. 그 모드의 connection.execute()는
+    # None을 돌려주므로 결과를 읽는 검사가 성립하지 않는다(AttributeError로 죽는다).
+    # 대신 만들어진 스크립트를 실제 DB에서 돌릴 때 FK 추가가 실패해 드러난다.
+    # 조회 결과가 필요 없는 DDL과 시드만 스크립트에 남는다.
+    if not context.is_offline_mode():
+        _assert_no_orphan_references(op.get_bind())
 
     with op.batch_alter_table("chat_rooms", schema=None) as batch_op:
         batch_op.create_foreign_key(
