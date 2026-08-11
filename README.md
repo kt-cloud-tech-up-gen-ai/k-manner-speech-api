@@ -6,8 +6,8 @@ YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능�
 대화 종료 후 표현 평가는 OpenAI GPT-5.6 Luna의 Structured Outputs로 생성합니다.
 
 - 버전: `0.0.1`
-- 프레임워크: FastAPI + LangChain (`langchain-google-genai`)
-- 기본 모델: `gemini-2.5-flash` (`app/core/config.py`의 `CHAT_MODEL`)
+- 프레임워크: FastAPI + LangChain Google GenAI(채팅) + Google GenAI SDK(감정 분석)
+- 기본 채팅 모델: `gemini-3.1-flash-lite` (`CHAT_MODEL`로 변경 가능)
 - 표현 피드백 모델: `gpt-5.6-luna` (`FEEDBACK_MODEL`로 변경 가능)
 
 ---
@@ -65,9 +65,9 @@ pytest
 | 항목 | 조치 | 사유 |
 | --- | --- | --- |
 | 전체 15개 패키지 | 버전 미지정 → `==` 고정 | 재현 가능한 빌드. 위 "왜 고정했나" 참조 |
-| `langchain-core==1.5.3` | **신규 추가** | `app/services/llm.py`, `app/services/gemini.py`가 `langchain_core.messages`를 **직접 import** 하는데 선언이 없었음. `langchain-google-genai`의 전이 의존에 우연히 기대던 상태 — 상위 패키지가 의존성을 바꾸면 즉시 `ImportError` |
+| `langchain-google-genai` + `google-genai` | **채팅·감정 분석 provider** | 채팅은 LangChain provider와 Pydantic 구조화 출력을, 감정 분석은 Google SDK 직접 호출을 사용함. Google SDK 채팅 구현은 `app/services/llm_google_genai.py`에 복원용으로 보존 |
 | `httpx==0.28.1`, `pytest==9.1.1` | **`requirements-dev.txt` 신규** | `tests/test_new_apis.py`가 `fastapi.testclient.TestClient`를 쓰고 이는 `httpx`를 요구하나 어디에도 선언이 없어, 클린 환경에서 테스트가 실행 불가였음 |
-| `langchain`, `langchain-community`, `langchain-huggingface`, `langchain-text-splitters` | 고정하되 **제거 후보로 표시** | `app/`·`tests/` 전체 grep 결과 import 0건. 실제로 쓰이는 것은 `langchain-google-genai`와 `langchain-core` 뿐. 4개를 빼면 설치 패키지가 **84개 → 57개**로 줄어듦(langgraph·numpy·tokenizers·huggingface_hub·aiohttp 등이 딸려옴) |
+| `langchain`, `langchain-community`, `langchain-huggingface`, `langchain-text-splitters` | 고정하되 **제거 후보로 표시** | `app/`·`tests/` 전체 grep 결과 import 0건. 현재 채팅도 Google SDK를 직접 사용하므로 런타임에서 필요하지 않으며, 향후 RAG·에이전트 도입 판단 전까지 제거 후보로 남겨 둠 |
 | `python-multipart` | 고정하되 제거 후보로 표시 | `UploadFile`/`Form`을 쓰는 엔드포인트가 없음 |
 
 > 제거 후보 5개는 **아직 지우지 않았습니다.** 향후 파일 업로드나 RAG(text-splitters,
@@ -97,6 +97,8 @@ cp .env.example .env
 | `DATABASE_URL` | 선택 | 접속할 DB. 미설정 시 `postgresql+psycopg://postgres:postgres@localhost:5432/k_manner_speech`. **마이그레이션이 적용되는 대상이기도 하므로 값을 확인하고 실행하세요.** |
 | `GOOGLE_API_KEY` | 선택 | Gemini API 키. 먼저 확인합니다. |
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
+| `CHAT_MODEL` | 선택 | 채팅 답변 생성 모델. 기본값은 `gemini-3.1-flash-lite`. |
+| `EMOTION_MODEL` | 선택 | 텍스트 감정·말투·의도 분석 모델. 기본값은 `gemini-3.1-flash-lite`. |
 | `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 서버 환경에만 저장합니다. |
 | `FEEDBACK_MODEL` | 선택 | 표현 피드백 모델. 기본값은 `gpt-5.6-luna`. |
 | `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |
@@ -294,7 +296,8 @@ http://127.0.0.1:8000/web-speech-test
 
 - STT 구현: `SpeechRecognition` 또는 `webkitSpeechRecognition`
 - 인식 언어: `ko-KR`
-- K-MANNER 서버는 테스트 HTML만 제공하며 음성이나 전사 결과를 직접 받지 않습니다.
+- 음성 인식이 끝나면 확정 텍스트를 `POST /api/v1/user-input/text`로 보내 Gemini 감정 분석 결과를 표시합니다.
+- K-MANNER 서버는 원본 음성을 받지 않고, 브라우저가 생성한 확정 텍스트만 받습니다.
 - Web Speech API의 실제 처리 위치는 브라우저 구현에 따라 다르므로 항상 온디바이스 처리라고 보장되지는 않습니다.
 
 ### `GET /health`
@@ -1014,3 +1017,14 @@ prompt = composer.compose_by_name(
 - **대화 이력 없음**: 멀티턴 컨텍스트를 유지하지 않습니다 (`app/core/state.py`는 비어 있음).
 - **`explain.yaml`의 `id` 불일치**: 파일명은 `explain`이지만 `id` 필드는 `behavior`입니다.
   로더는 파일명을 사용하므로 동작에는 영향이 없습니다.
+
+---
+
+## 텍스트 감정 분석 API
+
+Gemini를 사용해 확정된 텍스트의 감정·표현 방식·의도를 구조화해 반환합니다.
+
+- API: `POST /api/v1/user-input/text`
+- 요청 예시: `{"text": "오늘 정말 속상했어."}`
+- 기본 모델: `gemini-3.1-flash-lite` (`EMOTION_MODEL`로 변경 가능)
+- 감정 그룹: 화남, 기쁨, 당황스러움, 궁금, 슬픔, 보통
