@@ -282,6 +282,21 @@ description: 무엇을 하는지와 언제 사용해야 하는지를 실제 트�
 
 ## API
 
+### `GET /web-speech-test`
+
+브라우저 내장 Web Speech API로 한국어 음성을 텍스트로 변환하는
+테스트 화면을 제공합니다. Chrome 또는 Edge에서 접속한 뒤 **마이크 시작**을
+누르고 마이크 권한을 허용하면 됩니다.
+
+```text
+http://127.0.0.1:8000/web-speech-test
+```
+
+- STT 구현: `SpeechRecognition` 또는 `webkitSpeechRecognition`
+- 인식 언어: `ko-KR`
+- K-MANNER 서버는 테스트 HTML만 제공하며 음성이나 전사 결과를 직접 받지 않습니다.
+- Web Speech API의 실제 처리 위치는 브라우저 구현에 따라 다르므로 항상 온디바이스 처리라고 보장되지는 않습니다.
+
 ### `GET /health`
 
 서버 상태를 점검합니다.
@@ -808,7 +823,10 @@ app/
 │   ├── auth.py             # POST /auth/login, GET/PUT /auth/me*
 │   ├── rooms.py            # 채팅방·메시지·피드백 API
 │   ├── catalog.py          # GET /personas, /scenarios
-│   └── voice.py            # POST /tts
+│   ├── voice.py            # POST /tts
+│   └── web_speech.py       # GET /web-speech-test
+├── static/
+│   └── web_speech_test.html # 브라우저 STT 테스트 UI
 ├── services/               # 도메인 로직·외부 API 호출
 │   ├── llm.py              # LangChain 경유 채팅 (프롬프트 조합 적용)
 │   ├── gemini.py           # Gemini REST 직접 호출 (/ask_gemini 전용)
