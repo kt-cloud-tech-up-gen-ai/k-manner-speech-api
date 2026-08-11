@@ -1028,3 +1028,48 @@ Gemini를 사용해 확정된 텍스트의 감정·표현 방식·의도를 구�
 - 요청 예시: `{"text": "오늘 정말 속상했어."}`
 - 기본 모델: `gemini-3.1-flash-lite` (`EMOTION_MODEL`로 변경 가능)
 - 감정 그룹: 화남, 기쁨, 당황스러움, 궁금, 슬픔, 보통
+
+---
+
+## Gemini 감정 표현 TTS
+
+기존 채팅 API에 Gemini 3.1 Flash TTS Preview 기반 감정 표현 TTS 기능이 추가되어 있습니다.
+
+`.env.example`을 참고해 `GOOGLE_API_KEY` 또는 `GEMINI_API_KEY`와 선택 설정을 `.env`에 입력한 뒤 기존과 동일하게 서버를 실행합니다. 채팅 API와 TTS API가 같은 Gemini API 키를 사용합니다.
+
+- Swagger: `http://127.0.0.1:8000/docs`
+- 생성 API: `POST /api/v1/emotion-tts/generate`
+- 상태 확인: `GET /api/v1/emotion-tts/health`
+- 기본 모델: `gemini-3.1-flash-tts-preview`
+- 기본 음성: `Kore`
+- 출력 형식: 24kHz mono 16-bit WAV
+
+TTS 관련 코드는 `app/routers/emotion_tts.py`, `app/services/`, `app/schemas/`에 있으며 생성 결과는 `app/outputs/`에 저장됩니다.
+
+요청 예시:
+
+```json
+{
+  "text": "안녕하세요. Gemini 음성 합성 테스트입니다.",
+  "speaking_style": "밝고 자연스럽게 말해 주세요."
+}
+```
+
+### STT 결과부터 TTS까지 통합 테스트
+
+브라우저나 별도 STT가 추출한 텍스트를 다음 API에 전달하면 감정분석, 페르소나 채팅,
+Gemini TTS를 순서대로 한 번씩 실행합니다.
+
+- API: `POST /api/v1/speech-pipeline/generate`
+- 입력: STT 결과 `text`, 채팅에 적용할 `persona`
+- 출력: 감정분석 결과, 답변, 답변 말투, WAV·메타데이터 경로
+
+```json
+{
+  "text": "오늘 정말 기분 좋은 일이 있었어.",
+  "persona": "friendly"
+}
+```
+
+이 API는 STT 엔진 자체를 실행하지 않습니다. `/web-speech-test` 같은 STT 단계가 확정한
+텍스트를 받아 이후 Gemini 파이프라인 전체를 검증하는 용도입니다.

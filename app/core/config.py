@@ -46,3 +46,28 @@ def get_api_key() -> str | None:
 
 def get_openai_api_key() -> str | None:
     return os.getenv("OPENAI_API_KEY")
+
+
+@dataclass(frozen=True)
+class TtsSettings:
+    """Gemini TTS 인증, 모델, 음성 및 출력 파일 설정."""
+
+    google_api_key: str
+    tts_model: str
+    voice_name: str
+    output_dir: Path
+
+
+@lru_cache
+def get_tts_settings() -> TtsSettings:
+    """검증된 Gemini TTS 설정을 프로세스당 한 번 반환합니다."""
+
+    api_key = (get_api_key() or "").strip()
+    if not api_key:
+        raise RuntimeError(".env 파일에 GOOGLE_API_KEY 또는 GEMINI_API_KEY를 입력하세요.")
+    return TtsSettings(
+        google_api_key=api_key,
+        tts_model=os.getenv("TTS_MODEL", "gemini-3.1-flash-tts-preview"),
+        voice_name=os.getenv("GEMINI_TTS_VOICE_NAME", "Kore"),
+        output_dir=Path(os.getenv("TTS_OUTPUT_DIR", "app/outputs")),
+    )
