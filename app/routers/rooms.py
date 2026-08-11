@@ -26,7 +26,7 @@ from app.services.feedback import (
     FeedbackResult,
     generate_feedback,
 )
-from app.services.llm import generate_answer
+from app.services.llm import generate_answer, generate_structured_answer
 
 router = APIRouter(tags=["rooms"])
 
@@ -227,14 +227,27 @@ def send_message(
     db.add(user_message)
     db.commit()
 
-    answer = generate_answer(question, persona=room.persona_id, history=history)
+    response_style = None
+    if request.analysis is not None:
+        generation = generate_structured_answer(
+            question,
+            persona=room.persona_id,
+            history=history,
+            analysis=request.analysis.model_dump(mode="json"),
+        )
+        answer = generation.answer
+        response_style = generation.response_style
+    else:
+        answer = generate_answer(question, persona=room.persona_id, history=history)
 
     assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
     db.add(assistant_message)
     db.commit()
 
     return SendMessageResponse(
-        answer=answer, message=_to_message_response(assistant_message)
+        answer=answer,
+        response_style=response_style,
+        message=_to_message_response(assistant_message),
     )
 
 
