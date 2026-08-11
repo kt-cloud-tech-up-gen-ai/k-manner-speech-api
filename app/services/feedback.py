@@ -13,7 +13,11 @@ from app.services.openai_client import OpenAIConfigurationError, get_openai_clie
 
 logger = logging.getLogger(__name__)
 
-FEEDBACK_PROMPT_VERSION = "expression-feedback-v1"
+# chat_feedbacks의 유니크 키(room_id, last_message_id, model, prompt_version)에서
+# "어떤 프롬프트 계약으로 만든 결과인가"를 담당한다. LLM에 넣는 내용(지시문·입력 payload)이
+# 바뀌면 반드시 올린다 — 올리지 않으면 대화가 더 진행되지 않은 방은 이전 계약으로 채점된
+# 결과를 계속 캐시에서 돌려받는다. v2에서 시나리오의 communication_goal을 입력에 추가했다.
+FEEDBACK_PROMPT_VERSION = "expression-feedback-v2"
 FEEDBACK_MESSAGE_LIMIT = 20
 MAX_MESSAGE_CHARS = 4_000
 
@@ -28,6 +32,9 @@ FEEDBACK_INSTRUCTIONS = """\
 - politeness: 상대를 배려하는 예의 수준과 무례함 여부
 - context_fit: 상황, 관계, 대화 목적에 맞는 표현인지
 - naturalness: 실제 한국어 화자가 쓰는 자연스러운 표현인지
+
+입력의 communication_goal은 사용자가 이 대화에서 달성해야 하는 목적이며, context_fit의 "대화 목적"이
+가리키는 값이다. null이면 정해진 목적이 없는 자유 대화이므로 상황과 관계만으로 판단한다.
 
 score는 네 항목 점수의 합이어야 한다. 문제를 과장하지 말고 실제 개선이 필요한 발화만 issues에 넣는다.
 각 issue의 message_id는 입력에 있는 값을 그대로 사용하고, suggestion에는 의도는 유지하면서 더 자연스럽고
@@ -75,12 +82,20 @@ def build_feedback_input(
     *,
     persona: str,
     scenario: str | None,
+    communication_goal: str | None,
 ) -> str:
-    """대화문을 프롬프트와 분리된 JSON 데이터로 직렬화한다."""
+    """대화문을 프롬프트와 분리된 JSON 데이터로 직렬화한다.
+
+    communication_goal에 기본값을 두지 않는 것은 의도적이다. 호출부가 빠뜨리면 조용히
+    None이 실려 채점 기준이 사라지는데, 그 상태로도 테스트는 초록이 된다.
+    """
     selected = messages[-FEEDBACK_MESSAGE_LIMIT:]
     payload = {
         "persona": persona,
         "scenario": scenario,
+        # context_fit(25점)이 "대화 목적에 맞는가"를 보므로 목적이 입력에 있어야 한다.
+        # 시나리오 없는 자유 대화방에서는 None이다.
+        "communication_goal": communication_goal,
         "messages": [
             {
                 "message_id": message.id,
@@ -103,6 +118,7 @@ def generate_feedback(
     *,
     persona: str,
     scenario: str | None,
+    communication_goal: str | None,
     user_id: str,
 ) -> FeedbackResult:
     try:
@@ -111,7 +127,12 @@ def generate_feedback(
             model=FEEDBACK_MODEL,
             reasoning={"effort": "low"},
             instructions=FEEDBACK_INSTRUCTIONS,
-            input=build_feedback_input(messages, persona=persona, scenario=scenario),
+            input=build_feedback_input(
+                messages,
+                persona=persona,
+                scenario=scenario,
+                communication_goal=communication_goal,
+            ),
             text_format=FeedbackResult,
             store=False,
             safety_identifier=make_safety_identifier(user_id),

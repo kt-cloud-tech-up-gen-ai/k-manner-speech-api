@@ -6,7 +6,34 @@ from urllib.error import HTTPError, URLError
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.routers.routers import AskGeminiRequest, GenerationConfig, ask_gemini
+from app.routers.chat import ask_gemini, chat
+from app.schemas.chat import AskGeminiRequest, ChatRequest, GenerationConfig
+from app.services.llm import ChatGeneration
+
+
+class EmotionAwareStatelessChatTests(unittest.TestCase):
+    @patch("app.routers.chat.llm.generate_structured_answer", autospec=True)
+    def test_analysis_returns_answer_and_response_style(self, mock_generate):
+        mock_generate.return_value = ChatGeneration(
+            answer="안녕하세요! 만나서 반가워요.",
+            response_style="따뜻하고 정중한 말투",
+        )
+
+        response = chat(
+            ChatRequest(
+                persona="doyun",
+                question="안녕하세요",
+                analysis={
+                    "emotion": "보통",
+                    "inferred_style": "정중하고 격식 있는 문어체",
+                    "intent": "인사 및 대화 시작",
+                },
+            )
+        )
+
+        self.assertEqual(response.answer, "안녕하세요! 만나서 반가워요.")
+        self.assertEqual(response.response_style, "따뜻하고 정중한 말투")
+        self.assertEqual(mock_generate.call_count, 1)
 
 
 class AskGeminiTests(unittest.TestCase):
@@ -18,8 +45,8 @@ class AskGeminiTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             GenerationConfig(additionalProp1={})
 
-    @patch("app.routers.routers.get_api_key", return_value="test-key")
-    @patch("app.routers.routers.urlopen")
+    @patch("app.services.gemini.get_api_key", return_value="test-key")
+    @patch("app.services.gemini.urlopen")
     def test_omitted_generation_config_is_not_sent_upstream(self, mock_urlopen, _mock_key):
         mock_urlopen.return_value.__enter__.return_value.read.return_value = (
             b'{"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}'
@@ -33,8 +60,8 @@ class AskGeminiTests(unittest.TestCase):
         self.assertNotIn("generationConfig", sent_request.data.decode("utf-8"))
         self.assertEqual(response.answer, "answer")
 
-    @patch("app.routers.routers.get_api_key", return_value="test-key")
-    @patch("app.routers.routers.urlopen")
+    @patch("app.services.gemini.get_api_key", return_value="test-key")
+    @patch("app.services.gemini.urlopen")
     def test_upstream_400_is_exposed_as_client_error(self, mock_urlopen, _mock_key):
         mock_urlopen.side_effect = HTTPError(
             url="https://example.test",
@@ -44,7 +71,7 @@ class AskGeminiTests(unittest.TestCase):
             fp=io.BytesIO(b'{"error":{"message":"Unknown name additionalProp1"}}'),
         )
 
-        with self.assertLogs("app.routers.routers", level="WARNING") as logs:
+        with self.assertLogs("app.services.gemini", level="WARNING") as logs:
             with self.assertRaises(HTTPException) as raised:
                 ask_gemini(AskGeminiRequest(systemInstruction="system", contents="hello"))
 
@@ -52,15 +79,15 @@ class AskGeminiTests(unittest.TestCase):
         self.assertNotIn("additionalProp1", raised.exception.detail)
         self.assertIn("additionalProp1", " ".join(logs.output))
 
-    @patch("app.routers.routers.get_api_key", return_value="test-key")
-    @patch("app.routers.routers.urlopen", side_effect=TimeoutError())
+    @patch("app.services.gemini.get_api_key", return_value="test-key")
+    @patch("app.services.gemini.urlopen", side_effect=TimeoutError())
     def test_timeout_is_gateway_timeout(self, _mock_urlopen, _mock_key):
         with self.assertRaises(HTTPException) as raised:
             ask_gemini(AskGeminiRequest(systemInstruction="system", contents="hello"))
         self.assertEqual(raised.exception.status_code, 504)
 
-    @patch("app.routers.routers.get_api_key", return_value="test-key")
-    @patch("app.routers.routers.urlopen", side_effect=URLError("offline"))
+    @patch("app.services.gemini.get_api_key", return_value="test-key")
+    @patch("app.services.gemini.urlopen", side_effect=URLError("offline"))
     def test_connection_failure_is_bad_gateway(self, _mock_urlopen, _mock_key):
         with self.assertRaises(HTTPException) as raised:
             ask_gemini(AskGeminiRequest(systemInstruction="system", contents="hello"))
