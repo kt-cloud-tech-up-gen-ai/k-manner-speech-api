@@ -30,32 +30,13 @@
     const startButton = document.querySelector('#startButton');
     const stopButton = document.querySelector('#stopButton');
     const statusElement = document.querySelector('#status');
-    const EMOTION_API_URL = 'http://127.0.0.1:8001/api/v1/user-input/text';
     let recognition = null;
     let startedAt = null;
     let finalTranscript = '';
-    let sessionFinalTranscript = '';
-    let lastEmotionAnalysis = null;
 
     function setListening(isListening) {
       startButton.disabled = isListening || !SpeechRecognition;
       stopButton.disabled = !isListening;
-    }
-
-    async function sendTextToEmotionApi(text) {
-      const response = await fetch(EMOTION_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.json().catch(() => null);
-        throw new Error(errorBody?.detail || `HTTP ${response.status}`);
-      }
-
-      lastEmotionAnalysis = await response.json();
-      return lastEmotionAnalysis;
     }
 
     function createRecognition() {
@@ -72,10 +53,7 @@
         let interimTranscript = '';
         for (let index = event.resultIndex; index < event.results.length; index += 1) {
           const text = event.results[index][0].transcript;
-          if (event.results[index].isFinal) {
-            finalTranscript += `${text} `;
-            sessionFinalTranscript += `${text} `;
-          }
+          if (event.results[index].isFinal) finalTranscript += `${text} `;
           else interimTranscript += text;
         }
         transcriptElement.value = `${finalTranscript}${interimTranscript}`.trim();
@@ -83,24 +61,14 @@
       instance.onerror = (event) => {
         statusElement.textContent = `음성 인식 오류: ${event.error}`;
       };
-      instance.onend = async () => {
+      instance.onend = () => {
         setListening(false);
         if (startedAt !== null) {
           document.querySelector('#sttTime').textContent = `${(performance.now() - startedAt).toFixed(0)} ms`;
         }
-        const recognizedText = sessionFinalTranscript.trim();
-        if (!recognizedText) {
-          statusElement.textContent = '인식된 텍스트가 없습니다.';
-          return;
-        }
-
-        statusElement.textContent = '텍스트를 감정 분석 API로 전달하고 있습니다.';
-        try {
-          const analysis = await sendTextToEmotionApi(recognizedText);
-          statusElement.textContent = `감정 분석 완료: ${analysis.user_emotion}`;
-        } catch (error) {
-          statusElement.textContent = `감정 분석 전달 실패: ${error.message}`;
-        }
+        statusElement.textContent = transcriptElement.value.trim()
+          ? '텍스트 변환이 완료되었습니다.'
+          : '인식된 텍스트가 없습니다.';
       };
       return instance;
     }
@@ -108,7 +76,6 @@
     startButton.addEventListener('click', () => {
       finalTranscript = transcriptElement.value.trim();
       if (finalTranscript) finalTranscript += ' ';
-      sessionFinalTranscript = '';
       recognition = createRecognition();
       recognition.start();
     });
