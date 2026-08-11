@@ -1,82 +1,58 @@
-"""persona / 시나리오 목록을 기존 프롬프트 YAML에서 읽어온다."""
+"""persona / 시나리오 카탈로그 조회.
 
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
+출처는 DB(`personas`, `scenarios`)다. 예전에는 프롬프트 YAML을 스캔해 목록을 만들었지만,
+같은 값이 파일과 DB 두 곳에 존재하면 어느 쪽이 맞는지 알 수 없어 DB 하나로 모았다.
 
-import yaml
+캐시는 두지 않는다. 카탈로그는 요청당 한 번 읽는 작은 테이블이고, 캐시를 두면
+관리 API로 값을 고쳤을 때 프로세스마다 다른 값을 보게 된다.
+"""
 
-from app.prompt_builder.general_chat import composer
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-PERSONA_DIR = "bundles/personas"
-SCENARIO_DIR = "modes"
-
-
-@dataclass(frozen=True)
-class Persona:
-    id: str
-    description: str
-    voice_id: str | None
+from app.models.catalog import Persona, Scenario, persona_scenarios
 
 
-@dataclass(frozen=True)
-class Scenario:
-    id: str
-    description: str
+def canonical_id(raw: str) -> str:
+    """클라이언트가 보낸 id를 카탈로그에 저장된 형태로 맞춘다.
+
+    조회는 관대하게 받되(대소문자·앞뒤 공백), **저장은 반드시 이 값으로** 해야 한다.
+    받은 값을 그대로 chat_rooms에 넣으면 조회는 통과하고 FK는 위반하는 상태가 된다
+    (PostgreSQL에서 500. SQLite는 FK를 강제하지 않아 드러나지 않았다).
+
+    여러 곳에서 각자 정규화하면 검사와 저장이 어긋나므로 이 함수 하나만 쓴다.
+    """
+    return raw.strip().lower()
 
 
-def _read_yaml(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    return data if isinstance(data, dict) else {}
+def list_personas(db: Session) -> list[Persona]:
+    return list(db.scalars(select(Persona).order_by(Persona.id)))
 
 
-def _iter_yaml(subdir: str) -> list[Path]:
-    directory = composer.root / subdir
-    if not directory.is_dir():
-        return []
-    return sorted(p for p in directory.glob("*.yaml") if p.is_file())
+def list_scenarios(db: Session) -> list[Scenario]:
+    return list(db.scalars(select(Scenario).order_by(Scenario.id)))
 
 
-@lru_cache(maxsize=1)
-def list_personas() -> tuple[Persona, ...]:
-    personas: list[Persona] = []
-    for path in _iter_yaml(PERSONA_DIR):
-        data = _read_yaml(path)
-        personas.append(
-            Persona(
-                id=str(data.get("id") or path.stem),
-                description=str(data.get("description") or ""),
-                voice_id=str(data["voice_id"]) if data.get("voice_id") else None,
+def find_persona(db: Session, persona_id: str) -> Persona | None:
+    """id는 대소문자를 구분하지 않는다(클라이언트가 보내는 값을 관대하게 받는다)."""
+    return db.scalar(select(Persona).where(Persona.id == canonical_id(persona_id)))
+
+
+def find_scenario(db: Session, scenario_id: str) -> Scenario | None:
+    return db.scalar(select(Scenario).where(Scenario.id == canonical_id(scenario_id)))
+
+
+def is_paired(db: Session, persona_id: str, scenario_id: str) -> bool:
+    """이 상대로 이 시나리오를 고를 수 있는가.
+
+    관계를 통해 목록을 불러와 확인하지 않는다. 한 조합만 알면 되므로 그 행만 조회한다.
+    """
+    return (
+        db.scalar(
+            select(persona_scenarios.c.persona_id).where(
+                persona_scenarios.c.persona_id == canonical_id(persona_id),
+                persona_scenarios.c.scenario_id == canonical_id(scenario_id),
             )
         )
-    return tuple(personas)
-
-
-@lru_cache(maxsize=1)
-def list_scenarios() -> tuple[Scenario, ...]:
-    scenarios: list[Scenario] = []
-    for path in _iter_yaml(SCENARIO_DIR):
-        data = _read_yaml(path)
-        scenarios.append(
-            Scenario(
-                id=str(data.get("id") or path.stem),
-                description=str(data.get("description") or ""),
-            )
-        )
-    return tuple(scenarios)
-
-
-def find_persona(persona_id: str) -> Persona | None:
-    target = persona_id.strip().lower()
-    return next((p for p in list_personas() if p.id.lower() == target), None)
-
-
-def find_scenario(scenario_id: str) -> Scenario | None:
-    target = scenario_id.strip().lower()
-    return next((s for s in list_scenarios() if s.id.lower() == target), None)
-
-
-def clear_cache() -> None:
-    list_personas.cache_clear()
-    list_scenarios.cache_clear()
+        is not None
+    )
