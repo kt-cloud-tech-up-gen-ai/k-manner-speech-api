@@ -300,6 +300,7 @@ def request_feedback(
         scenario=scenario.description if scenario else room.scenario_id,
         # 시나리오가 있을 때만 채점 기준이 되는 목적이 존재한다. 자유 대화방은 None.
         communication_goal=scenario.communication_goal if scenario else None,
+        user_id=actor.user_id,
     )
 
     feedback = ChatFeedback(
