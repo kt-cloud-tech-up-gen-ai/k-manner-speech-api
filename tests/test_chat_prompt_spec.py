@@ -96,5 +96,26 @@ class ChatHistoryTests(PromptTestCase):
         self.assertIn("사용자: 실제 발화", prompt)
 
 
+class EmotionAwareChatPromptTests(PromptTestCase):
+    def test_analysis_is_rendered_as_delimited_context(self):
+        prompt = build_chat_prompt(
+            question="안녕하세요",
+            persona=PERSONA_ID,
+            analysis={
+                "emotion": "보통",
+                "inferred_style": "정중하고 격식 있는 문어체",
+                "intent": "인사 및 대화 시작",
+            },
+        )
+
+        self.assertIn("## 현재 사용자 입력 분석", prompt)
+        self.assertIn("감정: 보통", prompt)
+        self.assertIn("추론 말투: 정중하고 격식 있는 문어체", prompt)
+        self.assertIn("의도: 인사 및 대화 시작", prompt)
+        self.assertIn("사용자 텍스트: 안녕하세요", prompt)
+        self.assertIn(SAFETY_TEXT, prompt)
+        self.assertIn(IDENTITY_TEXT, prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

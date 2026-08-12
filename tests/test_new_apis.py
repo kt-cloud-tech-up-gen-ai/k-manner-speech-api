@@ -468,6 +468,41 @@ class RoomTests(ApiTestCase):
 
 
 class SendMessageTests(ApiTestCase):
+    @patch("app.routers.rooms.generate_structured_answer", autospec=True)
+    def test_analysis_generates_answer_and_response_style(self, mock_generate):
+        from app.services.llm import ChatGeneration
+
+        mock_generate.return_value = ChatGeneration(
+            answer="안녕하세요! 만나서 반가워요.",
+            response_style="따뜻하고 정중한 말투",
+        )
+        room_id = self._create_room().json()["id"]
+
+        response = self.client.post(
+            f"/rooms/{room_id}/messages",
+            json={
+                "question": "안녕하세요",
+                "analysis": {
+                    "emotion": "보통",
+                    "inferred_style": "정중하고 격식 있는 문어체",
+                    "intent": "인사 및 대화 시작",
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["answer"], "안녕하세요! 만나서 반가워요.")
+        self.assertEqual(response.json()["response_style"], "따뜻하고 정중한 말투")
+        self.assertEqual(
+            mock_generate.call_args.kwargs["analysis"],
+            {
+                "emotion": "보통",
+                "inferred_style": "정중하고 격식 있는 문어체",
+                "intent": "인사 및 대화 시작",
+            },
+        )
+        self.assertEqual(mock_generate.call_count, 1)
+
     @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!", autospec=True)
     def test_message_and_answer_are_persisted(self, mock_generate):
         room_id = self._create_room().json()["id"]
@@ -1193,6 +1228,16 @@ class OpenApiContractTests(unittest.TestCase):
         withdraw = spec["paths"]["/auth/me"]["delete"]
         self.assertTrue(withdraw.get("summary"), msg="AC-T9-OPENAPI-CONTRACT")
         self.assertIn("401", withdraw["responses"], msg="AC-T9-OPENAPI-CONTRACT")
+
+
+class WebSpeechTests(ApiTestCase):
+    def test_web_speech_test_page_is_served(self):
+        response = self.client.get("/web-speech-test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("SpeechRecognition", response.text)
+        self.assertIn("ko-KR", response.text)
 
 
 if __name__ == "__main__":
