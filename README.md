@@ -296,7 +296,8 @@ http://127.0.0.1:8000/web-speech-test
 
 - STT 구현: `SpeechRecognition` 또는 `webkitSpeechRecognition`
 - 인식 언어: `ko-KR`
-- 음성 인식이 끝나면 확정 텍스트를 `POST /api/v1/user-input/text`로 보내 Gemini 감정 분석 결과를 표시합니다.
+- 음성 인식이 끝나면 확정 텍스트를 `POST /rooms/{room_id}/turns/voice`로 보내 감정분석, 페르소나 답변·말투 생성, Gemini TTS와 피드백을 실행합니다.
+- 텍스트를 직접 입력한 경우에는 `POST /rooms/{room_id}/turns/text`로 같은 대화·피드백 흐름을 실행합니다.
 - K-MANNER 서버는 원본 음성을 받지 않고, 브라우저가 생성한 확정 텍스트만 받습니다.
 - Web Speech API의 실제 처리 위치는 브라우저 구현에 따라 다르므로 항상 온디바이스 처리라고 보장되지는 않습니다.
 
@@ -411,7 +412,6 @@ curl http://127.0.0.1:8000/personas/doyun
   "gender": "male",
   "description": "도윤 / 캠퍼스 훈남 / 처음 만난 또래",
   "relationship_description": "같은 캠퍼스에서 오늘 처음 만난 또래",
-  "voice_id": null,
   "version": "2026-08-07T00:00:00Z",
   "scenarios": [
     {
@@ -439,7 +439,6 @@ curl http://127.0.0.1:8000/personas/doyun
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
 | `relationship_description` | string | 사용자와 이 상대의 관계. 호칭과 존대 수준을 정합니다. |
-| `voice_id` | string \| null | ElevenLabs 음성 id. `null`이면 `ELEVENLABS_VOICE_ID` 기본 음성을 씁니다. |
 | `version` | datetime | 정의가 마지막으로 바뀐 시각. 클라이언트 캐시 무효화에 씁니다. |
 | `scenarios` | array | **이 상대로 고를 수 있는 시나리오.** id 오름차순. 원소는 목록과 같은 요약 형태입니다. |
 
@@ -819,14 +818,15 @@ app/
 │   ├── health.py
 │   ├── rooms.py
 │   ├── catalog.py
-│   └── voice.py
+│   ├── conversation.py
+│   └── room_conversation.py
 ├── routers/                # HTTP 엔드포인트만. 로직은 services에 위임
 │   ├── health.py           # GET /health
 │   ├── chat.py             # POST /chat, /ask_gemini
 │   ├── auth.py             # POST /auth/login, GET/PUT /auth/me*
 │   ├── rooms.py            # 채팅방·메시지·피드백 API
 │   ├── catalog.py          # GET /personas, /scenarios
-│   ├── voice.py            # POST /tts
+│   ├── room_conversation.py # Room 문맥 기반 음성·텍스트 턴과 WAV 조회
 │   └── web_speech.py       # GET /web-speech-test
 ├── static/
 │   └── web_speech_test.html # 브라우저 STT 테스트 UI
@@ -836,7 +836,7 @@ app/
 │   ├── feedback.py         # Luna Structured Outputs 표현 평가
 │   ├── openai_client.py    # OpenAI 클라이언트 생성
 │   ├── catalog.py          # persona/scenario YAML 조회
-│   └── tts.py              # ElevenLabs 음성 합성
+│   └── gemini_answer_audio_generator.py # 페르소나 답변 Gemini 음성 생성
 ├── prompt_builder/
 │   ├── composer.py         # PromptComposer
 │   └── general_chat.py     # 일반 채팅 프롬프트 조합
@@ -1020,56 +1020,39 @@ prompt = composer.compose_by_name(
 
 ---
 
-## 텍스트 감정 분석 API
-
-Gemini를 사용해 확정된 텍스트의 감정·표현 방식·의도를 구조화해 반환합니다.
-
-- API: `POST /api/v1/user-input/text`
-- 요청 예시: `{"text": "오늘 정말 속상했어."}`
-- 기본 모델: `gemini-3.1-flash-lite` (`EMOTION_MODEL`로 변경 가능)
-- 감정 그룹: 화남, 기쁨, 당황스러움, 궁금, 슬픔, 보통
-
----
-
 ## Gemini 감정 표현 TTS
 
 기존 채팅 API에 Gemini 3.1 Flash TTS Preview 기반 감정 표현 TTS 기능이 추가되어 있습니다.
 
-`.env.example`을 참고해 `GOOGLE_API_KEY` 또는 `GEMINI_API_KEY`와 선택 설정을 `.env`에 입력한 뒤 기존과 동일하게 서버를 실행합니다. 채팅 API와 TTS API가 같은 Gemini API 키를 사용합니다.
+`.env.example`을 참고해 `GOOGLE_API_KEY` 또는 `GEMINI_API_KEY`와 선택 설정을 `.env`에 입력한 뒤 기존과 동일하게 서버를 실행합니다. 페르소나 채팅과 TTS가 같은 Gemini API 키를 사용합니다.
 
 - Swagger: `http://127.0.0.1:8000/docs`
-- 생성 API: `POST /api/v1/emotion-tts/generate`
-- 상태 확인: `GET /api/v1/emotion-tts/health`
+- 음성 조회: `GET /rooms/{room_id}/audio/{filename}`
 - 기본 모델: `gemini-3.1-flash-tts-preview`
 - 기본 음성: `Kore`
 - 출력 형식: 24kHz mono 16-bit WAV
 
-TTS 관련 코드는 `app/routers/emotion_tts.py`, `app/services/`, `app/schemas/`에 있으며 생성 결과는 `app/outputs/`에 저장됩니다.
+TTS 생성은 `app/services/gemini_answer_audio_generator.py`가 담당하며 생성 결과는
+`app/outputs/`에 저장됩니다. 별도 TTS 생성 API 없이 conversation 파이프라인에서만 호출합니다.
 
-요청 예시:
+### 음성·텍스트 페르소나 대화 API
 
-```json
-{
-  "text": "안녕하세요. Gemini 음성 합성 테스트입니다.",
-  "speaking_style": "밝고 자연스럽게 말해 주세요."
-}
-```
+음성 STT 변환문 또는 직접 입력한 텍스트를 전달하면 감정분석, 페르소나 채팅,
+Gemini TTS를 순서대로 한 번씩 실행합니다. 두 입력 모두 분석 결과, 답변, 답변 말투,
+WAV·메타데이터 경로를 포함한 동일한 응답을 반환합니다.
 
-### STT 결과부터 TTS까지 통합 테스트
+- 음성(STT 변환문): `POST /rooms/{room_id}/turns/voice`, 입력 필드 `transcript`
+- 직접 텍스트: `POST /rooms/{room_id}/turns/text`, 입력 필드 `text`
 
-브라우저나 별도 STT가 추출한 텍스트를 다음 API에 전달하면 감정분석, 페르소나 채팅,
-Gemini TTS를 순서대로 한 번씩 실행합니다.
-
-- API: `POST /api/v1/speech-pipeline/generate`
-- 입력: STT 결과 `text`, 채팅에 적용할 `persona`
-- 출력: 감정분석 결과, 답변, 답변 말투, WAV·메타데이터 경로
+Persona·Scenario·대화 목표·이전 메시지·사용자 ID는 요청 본문이 아니라 인증된 Room에서
+조회합니다. Conversation 파이프라인과 표현 피드백 AI를 동시에 실행하고 두 결과를 통합 응답으로 반환합니다.
 
 ```json
 {
-  "text": "오늘 정말 기분 좋은 일이 있었어.",
+  "transcript": "오늘 정말 기분 좋은 일이 있었어.",
   "persona": "friendly"
 }
 ```
 
 이 API는 STT 엔진 자체를 실행하지 않습니다. `/web-speech-test` 같은 STT 단계가 확정한
-텍스트를 받아 이후 Gemini 파이프라인 전체를 검증하는 용도입니다.
+텍스트를 받아 이후 Gemini 파이프라인 전체를 실행합니다.

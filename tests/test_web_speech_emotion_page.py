@@ -9,30 +9,42 @@ class WebSpeechEmotionPageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.page = PAGE.read_text(encoding="utf-8")
 
-    def test_posts_transcript_and_persona_to_full_pipeline_once(self):
-        self.assertIn("/api/v1/speech-pipeline/generate", self.page)
+    def test_posts_microphone_transcript_to_voice_input_route(self):
+        self.assertIn("/turns/voice`", self.page)
         self.assertIn("method: 'POST'", self.page)
-        self.assertIn("JSON.stringify({ text, persona })", self.page)
-        self.assertIn("await runSpeechPipeline(transcript)", self.page)
+        self.assertIn("JSON.stringify({ transcript: text })", self.page)
+        self.assertIn("await runVoiceInput(transcript)", self.page)
         self.assertNotIn("fetch('/api/v1/user-input/text'", self.page)
         self.assertNotIn("fetch('/chat'", self.page)
 
+    def test_direct_text_uses_same_three_stage_pipeline(self):
+        self.assertIn('id="textPipelineButton"', self.page)
+        self.assertIn("/turns/text`", self.page)
+        self.assertIn("JSON.stringify({ text })", self.page)
+        self.assertIn("await runTextInput(text)", self.page)
+        self.assertIn("conversation.answer", self.page)
+        self.assertIn("conversation.audio.audio_path", self.page)
+
     def test_renders_pipeline_results_and_playable_audio(self):
-        self.assertIn("body.analysis.user_emotion", self.page)
-        self.assertIn("body.analysis.inferred_style", self.page)
-        self.assertIn("body.analysis.user_intent", self.page)
-        self.assertIn("body.answer", self.page)
-        self.assertIn("body.response_style", self.page)
-        self.assertIn("body.processing_time_ms", self.page)
+        self.assertIn("conversation.analysis.user_emotion", self.page)
+        self.assertIn("conversation.analysis.inferred_style", self.page)
+        self.assertIn("conversation.analysis.user_intent", self.page)
+        self.assertIn("conversation.answer", self.page)
+        self.assertIn("conversation.response_style", self.page)
+        self.assertIn("conversation.processing_time_ms", self.page)
         self.assertIn('id="chatAnswer"', self.page)
         self.assertIn('id="responseStyle"', self.page)
         self.assertIn('id="ttsAudio"', self.page)
-        self.assertIn("/api/v1/emotion-tts/audio/", self.page)
+        self.assertIn("/audio/${encodeURIComponent(audioFilename)}", self.page)
+        self.assertIn("Authorization: `Bearer ${accessToken}`", self.page)
+        self.assertIn("URL.createObjectURL", self.page)
         self.assertIn("audioElement.load()", self.page)
 
-    def test_has_labeled_persona_and_accessible_pipeline_status(self):
-        self.assertIn('for="persona"', self.page)
-        self.assertIn('id="persona"', self.page)
+    def test_has_labeled_room_auth_and_accessible_pipeline_status(self):
+        self.assertIn('for="roomId"', self.page)
+        self.assertIn('id="roomId"', self.page)
+        self.assertIn('for="accessToken"', self.page)
+        self.assertIn('id="accessToken"', self.page)
         self.assertIn('id="pipelineStatus"', self.page)
         self.assertIn('aria-live="polite"', self.page)
         self.assertIn("pipelineStatusElement.textContent", self.page)

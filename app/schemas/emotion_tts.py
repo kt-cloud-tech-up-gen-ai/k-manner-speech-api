@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field
 
+
 class EmotionTtsRequest(BaseModel):
     """페르소나가 결정한 답변 내용과 말투 지시를 담는 요청."""
 
@@ -29,9 +30,3 @@ class EmotionTtsResponse(BaseModel):
     tts_provider: str
     tts_model: str
     voice_name: str
-
-
-class HealthResponse(BaseModel):
-    """라우터 등록 상태를 표현하는 가벼운 상태 확인 응답."""
-
-    status: str

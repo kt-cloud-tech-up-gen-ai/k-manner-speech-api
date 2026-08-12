@@ -78,10 +78,6 @@ class PersonaResponse(PersonaSummaryResponse):
     relationship_description: str = Field(
         description="사용자와의 관계. 호칭과 존대 수준을 정한다"
     )
-    voice_id: str | None = Field(
-        default=None,
-        description="ElevenLabs 음성 id. 없으면 ELEVENLABS_VOICE_ID 기본 음성을 쓴다",
-    )
     version: datetime = Field(
         description="정의가 마지막으로 바뀐 시각. 클라이언트 캐시 무효화에 쓴다"
     )

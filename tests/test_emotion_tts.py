@@ -8,14 +8,13 @@ from unittest.mock import Mock, patch
 from fastapi import HTTPException
 
 from app.core.config import TtsSettings
-from app.routers import emotion_tts
+from app.routers import room_conversation
 from app.schemas.emotion_tts import EmotionTtsRequest
-from app.services.emotion_tts_pipeline import EmotionTtsService
-from app.services.tts import GeminiTtsService
+from app.services.gemini_answer_audio_generator import GeminiAnswerAudioGenerator
 
 
 class GeminiTtsTests(unittest.TestCase):
-    @patch("app.services.tts.genai.Client")
+    @patch("app.services.gemini_answer_audio_generator.genai.Client")
     def test_synthesize_requests_audio_with_selected_voice(self, client_class):
         pcm = b"\x00\x00" * 100
         client = client_class.return_value
@@ -28,9 +27,15 @@ class GeminiTtsTests(unittest.TestCase):
                 )
             ]
         )
-        service = GeminiTtsService("test-key", "gemini-3.1-flash-tts-preview")
+        settings = TtsSettings(
+            google_api_key="test-key",
+            tts_model="gemini-3.1-flash-tts-preview",
+            voice_name="Kore",
+            output_dir=Path("app/outputs"),
+        )
+        service = GeminiAnswerAudioGenerator(settings)
 
-        result = service.synthesize("테스트 문장", "밝게 말한다.", "Kore")
+        result = service._synthesize("테스트 문장", "밝게 말한다.", "Kore")
 
         self.assertEqual(result, pcm)
         call = client.models.generate_content.call_args
@@ -50,8 +55,8 @@ class GeminiTtsTests(unittest.TestCase):
                 voice_name="Kore",
                 output_dir=Path(tempdir),
             )
-            service = EmotionTtsService(settings)
-            service.tts.synthesize = Mock(return_value=b"\x00\x00" * 100)
+            service = GeminiAnswerAudioGenerator(settings)
+            service._synthesize = Mock(return_value=b"\x00\x00" * 100)
             request = EmotionTtsRequest(
                 text="안녕하세요",
                 speaking_style="밝고 친근한 목소리로 말한다.",
@@ -78,8 +83,15 @@ class GeminiTtsTests(unittest.TestCase):
                 voice_name="Kore",
                 output_dir=Path(tempdir),
             )
-            with patch.object(emotion_tts, "get_tts_settings", return_value=settings):
-                response = emotion_tts.get_generated_audio("result.wav")
+            with (
+                patch.object(
+                    room_conversation, "get_tts_settings", return_value=settings
+                ),
+                patch.object(room_conversation, "_get_room_or_404"),
+            ):
+                response = room_conversation.get_generated_audio(
+                    "room-1", "result.wav", Mock(), Mock()
+                )
 
             self.assertEqual(Path(response.path).resolve(), audio_path.resolve())
             self.assertEqual(response.media_type, "audio/wav")
@@ -92,9 +104,16 @@ class GeminiTtsTests(unittest.TestCase):
                 voice_name="Kore",
                 output_dir=Path(tempdir),
             )
-            with patch.object(emotion_tts, "get_tts_settings", return_value=settings):
+            with (
+                patch.object(
+                    room_conversation, "get_tts_settings", return_value=settings
+                ),
+                patch.object(room_conversation, "_get_room_or_404"),
+            ):
                 with self.assertRaises(HTTPException) as raised:
-                    emotion_tts.get_generated_audio("../secret.wav")
+                    room_conversation.get_generated_audio(
+                        "room-1", "../secret.wav", Mock(), Mock()
+                    )
 
             self.assertEqual(raised.exception.status_code, 404)
 
