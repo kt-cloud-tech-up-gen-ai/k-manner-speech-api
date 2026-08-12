@@ -56,6 +56,7 @@ class ChatMessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+    audio_url: str | None = None
 
 
 class ChatMessageListResponse(BaseModel):

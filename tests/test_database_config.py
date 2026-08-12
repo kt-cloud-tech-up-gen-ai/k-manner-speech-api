@@ -23,7 +23,10 @@ class DatabaseConfigTests(unittest.TestCase):
         get_engine.cache_clear()
 
     def test_missing_database_url_returns_503_without_connecting(self) -> None:
-        with patch.dict(os.environ, {"DATABASE_URL": ""}):
+        with patch.dict(
+            os.environ,
+            {"DATABASE_URL": "", "GUEST_SESSION_SECRET": "test-guest-session-secret-32chars"},
+        ):
             get_session_factory.cache_clear()
             get_engine.cache_clear()
             with TestClient(app, raise_server_exceptions=False) as client:

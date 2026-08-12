@@ -57,6 +57,7 @@ class PersonaSummaryResponse(BaseModel):
     age: int = Field(description="만 나이. 사용자와의 나이 차가 존댓말/반말을 가른다")
     gender: Gender = Field(description="성별. 3인칭 표현과 음성 선택에 쓰인다")
     description: str = Field(description="목록 화면에 보여 주는 한 줄 소개")
+    avatar_url: str | None = Field(default=None, description="공개 페르소나 이미지 URL")
 
 
 class ScenarioSummaryResponse(BaseModel):
