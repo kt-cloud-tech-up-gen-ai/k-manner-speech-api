@@ -71,3 +71,21 @@ def get_tts_settings() -> TtsSettings:
         voice_name=os.getenv("GEMINI_TTS_VOICE_NAME", "Kore"),
         output_dir=Path(os.getenv("TTS_OUTPUT_DIR", "app/outputs")),
     )
+
+
+# 웹 프론트가 :5173, API가 :8000 이라 출처가 다르다. 미설정 시 로컬 개발 출처만 허용한다.
+# localhost와 127.0.0.1은 브라우저에게 서로 다른 출처라 둘 다 넣는다.
+DEFAULT_CORS_ALLOW_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+
+
+def get_cors_allow_origins() -> list[str]:
+    """CORS_ALLOW_ORIGINS(쉼표 구분)를 파싱한다. 값이 없거나 비면 기본값."""
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "")
+    # "".split(",") == [""] — 빈 항목을 그대로 두면 아무 출처와도 매칭되지 않는 항목이 남는다.
+    # 끝의 슬래시도 제거한다(브라우저는 Origin 헤더를 슬래시 없이 보낸다).
+    origins = [o.strip().rstrip("/") for o in raw.split(",")]
+    origins = [o for o in origins if o]
+    return origins or list(DEFAULT_CORS_ALLOW_ORIGINS)
