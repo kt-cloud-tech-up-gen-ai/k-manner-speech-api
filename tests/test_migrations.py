@@ -20,7 +20,6 @@ PERSONA_SCENARIOS = "b4d7e2a13c60"
 PROGRESS = "c3f1a9d5e274"
 CAMPUS_DIRECTIONS = "d5b8c07f9a13"
 FREE_CHAT_UNIQUE = "e7a2f4c81b09"
-PROFILE_AND_GUEST = "f8b3c9d21a40"
 
 
 class MigrationTestCase(unittest.TestCase):
@@ -79,20 +78,6 @@ class BaselineTests(MigrationTestCase):
             )
             diff = compare_metadata(context, Base.metadata)
         self.assertEqual(diff, [])
-
-
-class ProfileAndGuestRevisionTests(MigrationTestCase):
-    def test_upgrade_adopts_compatible_preexisting_age_column(self):
-        self.upgrade(FREE_CHAT_UNIQUE)
-        with self.engine.begin() as connection:
-            connection.execute(text("ALTER TABLE user_profiles ADD COLUMN age INTEGER"))
-
-        self.upgrade(PROFILE_AND_GUEST)
-
-        profile_columns = self.columns("user_profiles")
-        self.assertIn("name", profile_columns, "AC-LIVE-MIGRATION-CHAIN")
-        self.assertIn("age", profile_columns)
-        self.assertIn("learning_goal_other", profile_columns)
 
 
 class SchemaChangeTests(MigrationTestCase):

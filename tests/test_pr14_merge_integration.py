@@ -26,7 +26,8 @@ class Pr14MergeIntegrationTests(ApiTestCase):
 
     def test_app_keeps_infrastructure_and_analysis_routes(self):
         paths = fastapi_app.openapi()["paths"]
-        self.assertIn("/api/v1/user-input/text", paths, "AC-PR14-APP-WIRING")
+        self.assertIn("/rooms/{room_id}/turns/text", paths, "AC-PR14-APP-WIRING")
+        self.assertIn("/rooms/{room_id}/turns/voice", paths, "AC-PR14-APP-WIRING")
         web_speech = self.client.get("/web-speech-test")
         self.assertEqual(web_speech.status_code, 200, "AC-PR14-APP-WIRING")
         self.assertIn("SpeechRecognition", web_speech.text, "AC-PR14-APP-WIRING")
@@ -36,7 +37,7 @@ class Pr14MergeIntegrationTests(ApiTestCase):
             with self.subTest(expected=expected):
                 self.assertIn(expected, middleware_names, "AC-PR14-APP-WIRING")
 
-    @patch("app.routers.rooms.generate_structured_answer", create=True)
+    @patch("app.routers.room_conversation.generate_structured_answer")
     def test_guest_analysis_third_turn_is_structured_and_completes(self, mock_generate):
         from app.services.llm import ChatGeneration
 
@@ -56,7 +57,9 @@ class Pr14MergeIntegrationTests(ApiTestCase):
         room_id = room.json()["id"]
         headers = {"X-CSRF-Token": self.client.cookies.get("csrf_token")}
 
-        with patch("app.routers.rooms.generate_answer", side_effect=["a1", "a2"]):
+        with patch(
+            "app.routers.room_conversation.generate_answer", side_effect=["a1", "a2"]
+        ):
             for number in (1, 2):
                 response = self.client.post(
                     f"/rooms/{room_id}/messages",
@@ -102,7 +105,7 @@ class Pr14MergeIntegrationTests(ApiTestCase):
         env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
         expected_once = (
-            "google-genai>=1.0.0,<2.0.0",
+            "google-genai==1.75.0",
             "langchain-google-genai==4.3.2",
             "openai==2.53.0",
         )

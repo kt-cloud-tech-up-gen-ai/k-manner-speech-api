@@ -27,6 +27,10 @@ EXPECTED_COLUMNS = {
     "last_read_at": ("DATETIME", True),
     "status": ("VARCHAR(32)", False),
     "turn_count": ("INTEGER", False),
+    "started_at": ("DATETIME", True),
+    "completed_at": ("DATETIME", True),
+    "duration_seconds": ("INTEGER", True),
+    "is_tutorial": ("BOOLEAN", False),
 }
 
 

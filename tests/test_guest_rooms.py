@@ -48,7 +48,10 @@ class GuestTurnTests(ApiTestCase):
         room_id = room.json()["id"]
         csrf = self.client.cookies.get("csrf_token")
         headers = {"X-CSRF-Token": csrf}
-        with patch("app.routers.rooms.generate_answer", side_effect=["a1", "a2", "final"]):
+        with patch(
+            "app.routers.room_conversation.generate_answer",
+            side_effect=["a1", "a2", "final"],
+        ):
             for number in range(1, 4):
                 response = self.client.post(
                     f"/rooms/{room_id}/messages",

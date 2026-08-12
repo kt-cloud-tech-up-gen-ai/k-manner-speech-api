@@ -3,33 +3,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
 from app.core.guest import Actor, get_actor
-from app.models.chat import ChatFeedback, ChatMessage, ChatRoom, ChatRoomStatus
+from app.models.chat import ChatMessage, ChatRoom
 from app.schemas.rooms import (
-    ChatMessageListResponse,
     ChatMessageResponse,
     CreateRoomRequest,
-    FeedbackResponse,
     RoomListResponse,
     RoomResponse,
-    SendMessageRequest,
-    SendMessageResponse,
 )
 from app.services import catalog
-from app.services.feedback import (
-    FEEDBACK_MESSAGE_LIMIT,
-    FEEDBACK_PROMPT_VERSION,
-    FeedbackMessage,
-    FeedbackResult,
-    generate_feedback,
-)
-from app.services.llm import generate_answer, generate_structured_answer
 
 router = APIRouter(tags=["rooms"])
-
-HISTORY_LIMIT = 50
 GUEST_MAX_TURNS = 3
 
 # 방 주인은 로그인 사용자 ID 또는 서버가 서명한 게스트 ID가 정하고,
@@ -203,142 +188,3 @@ def delete_room(
     """
     db.delete(_get_room_or_404(db, room_id, actor))
     db.commit()
-
-
-@router.get("/rooms/{room_id}/messages", response_model=ChatMessageListResponse)
-def list_messages(
-    room_id: str, actor: Actor = Depends(get_actor), db: Session = Depends(get_db)
-) -> ChatMessageListResponse:
-    """채팅방의 채팅 내역을 오래된 순으로 반환한다. (KAN-62)"""
-    room = _get_room_or_404(db, room_id, actor)
-    return ChatMessageListResponse(
-        messages=[_to_message_response(message) for message in room.messages]
-    )
-
-
-@router.post("/rooms/{room_id}/messages", response_model=SendMessageResponse)
-def send_message(
-    room_id: str,
-    request: SendMessageRequest,
-    actor: Actor = Depends(get_actor),
-    db: Session = Depends(get_db),
-) -> SendMessageResponse:
-    """사용자 메시지를 저장하고 persona 응답을 생성해 함께 저장한다. (KAN-65)
-
-    TODO(KAN-59/KAN-65): room.scenario_id를 저장만 하고 프롬프트에는 반영하지 않는다.
-      build_chat_prompt가 modes 번들을 받도록 확장해 시나리오(면접/역할극)를 적용할 것.
-    """
-    room = _get_room_or_404(db, room_id, actor)
-    if room.status is not ChatRoomStatus.IN_PROGRESS:
-        raise HTTPException(status_code=409, detail="이미 종료된 채팅방입니다.")
-
-    question = request.question.strip()
-    if not question:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="질문을 입력해 주세요.")
-
-    history = [
-        {"role": message.role, "content": message.content}
-        for message in room.messages[-HISTORY_LIMIT:]
-    ]
-
-    response_style = None
-    if request.analysis is not None:
-        generation = generate_structured_answer(
-            question,
-            persona=room.persona_id,
-            history=history,
-            analysis=request.analysis.model_dump(mode="json"),
-        )
-        answer = generation.answer
-        response_style = generation.response_style
-    else:
-        answer = generate_answer(question, persona=room.persona_id, history=history)
-
-    user_message = ChatMessage(room_id=room.id, role="user", content=question)
-    assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
-    db.add_all([user_message, assistant_message])
-    if actor.is_guest:
-        room.turn_count += 1
-        if room.turn_count >= GUEST_MAX_TURNS:
-            room.status = ChatRoomStatus.COMPLETED
-    db.commit()
-
-    return SendMessageResponse(
-        answer=answer,
-        response_style=response_style,
-        message=_to_message_response(assistant_message),
-    )
-
-
-@router.post("/rooms/{room_id}/feedback", response_model=FeedbackResponse)
-def request_feedback(
-    room_id: str, actor: Actor = Depends(get_actor), db: Session = Depends(get_db)
-) -> FeedbackResponse:
-    """채팅방 대화에서 사용자 말투의 예절/매너를 평가한다. (KAN-63)"""
-    room = _get_room_or_404(db, room_id, actor)
-    if actor.is_guest:
-        raise HTTPException(status_code=403, detail="게스트 대화에는 피드백을 제공하지 않습니다.")
-
-    if not any(message.role == "user" for message in room.messages):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="피드백할 사용자 발화가 없습니다.",
-        )
-
-    last_message = room.messages[-1]
-    existing = db.scalar(
-        select(ChatFeedback).where(
-            ChatFeedback.room_id == room.id,
-            ChatFeedback.last_message_id == last_message.id,
-            ChatFeedback.model == FEEDBACK_MODEL,
-            ChatFeedback.prompt_version == FEEDBACK_PROMPT_VERSION,
-        )
-    )
-    if existing is not None:
-        result = FeedbackResult.model_validate(existing.result_json)
-        return FeedbackResponse(**result.model_dump(), cached=True)
-
-    messages = [
-        FeedbackMessage(id=message.id, role=message.role, content=message.content)
-        for message in room.messages[-FEEDBACK_MESSAGE_LIMIT:]
-        if message.role in {"user", "assistant"}
-    ]
-    persona = catalog.find_persona(db, room.persona_id)
-    scenario = catalog.find_scenario(db, room.scenario_id) if room.scenario_id else None
-    result = generate_feedback(
-        messages,
-        persona=persona.description if persona else room.persona_id,
-        scenario=scenario.description if scenario else room.scenario_id,
-        # 시나리오가 있을 때만 채점 기준이 되는 목적이 존재한다. 자유 대화방은 None.
-        communication_goal=scenario.communication_goal if scenario else None,
-        user_id=actor.user_id,
-    )
-
-    feedback = ChatFeedback(
-        room_id=room.id,
-        last_message_id=last_message.id,
-        model=FEEDBACK_MODEL,
-        prompt_version=FEEDBACK_PROMPT_VERSION,
-        score=result.score,
-        result_json=result.model_dump(mode="json"),
-    )
-    db.add(feedback)
-    try:
-        db.commit()
-    except IntegrityError:
-        # 동시에 같은 대화를 평가한 요청이 먼저 저장한 경우 기존 결과를 재사용한다.
-        db.rollback()
-        existing = db.scalar(
-            select(ChatFeedback).where(
-                ChatFeedback.room_id == room.id,
-                ChatFeedback.last_message_id == last_message.id,
-                ChatFeedback.model == FEEDBACK_MODEL,
-                ChatFeedback.prompt_version == FEEDBACK_PROMPT_VERSION,
-            )
-        )
-        if existing is None:
-            raise
-        result = FeedbackResult.model_validate(existing.result_json)
-        return FeedbackResponse(**result.model_dump(), cached=True)
-
-    return FeedbackResponse(**result.model_dump(), cached=False)

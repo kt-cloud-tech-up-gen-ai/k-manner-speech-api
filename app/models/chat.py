@@ -4,6 +4,7 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -12,7 +13,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, enum_column
@@ -55,6 +58,17 @@ class ChatRoomStatus(str, Enum):
 
 class ChatRoom(Base):
     __tablename__ = "chat_rooms"
+    __table_args__ = (
+        CheckConstraint(
+            "(user_id IS NOT NULL AND guest_id IS NULL) OR "
+            "(user_id IS NULL AND guest_id IS NOT NULL)",
+            name="ck_chat_rooms_exactly_one_owner",
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds >= 0",
+            name="ck_chat_rooms_duration_seconds",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     # Supabase auth.users.id. 스키마 소유가 달라 FK는 걸지 않는다(논리 참조).
@@ -95,6 +109,16 @@ class ChatRoom(Base):
     # 메시지 수로 매번 계산하지 않고 컬럼에 두는 이유는 scenario.max_turns와 비교해
     # 종료를 판정하는 값이라, 목록 조회에서도 집계 없이 읽을 수 있어야 하기 때문이다.
     turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_tutorial: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     messages: Mapped[list["ChatMessage"]] = relationship(
         back_populates="room",
@@ -106,16 +130,14 @@ class ChatRoom(Base):
         cascade="all, delete-orphan",
         order_by="ChatFeedback.created_at",
     )
+    message_feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
+        back_populates="room",
+        cascade="all, delete-orphan",
+        order_by="ChatMessageFeedback.created_at",
+    )
 
 
 Index("ix_chat_rooms_user_id_created_at", ChatRoom.user_id, ChatRoom.created_at)
-Index("ix_chat_rooms_guest_id_created_at", ChatRoom.guest_id, ChatRoom.created_at)
-ChatRoom.__table__.append_constraint(
-    CheckConstraint(
-        "(user_id IS NOT NULL AND guest_id IS NULL) OR (user_id IS NULL AND guest_id IS NOT NULL)",
-        name="ck_chat_rooms_exactly_one_owner",
-    )
-)
 # 채팅방 목록의 "최근 연락순" 정렬 전용.
 #
 # 방향은 붙이지 않는다. `WHERE user_id = ?`가 등치 조건이라 남는 정렬 키는 last_message_at
@@ -130,6 +152,21 @@ Index(
     "ix_chat_rooms_user_id_last_message_at",
     ChatRoom.user_id,
     ChatRoom.last_message_at,
+)
+Index("ix_chat_rooms_guest_id_created_at", ChatRoom.guest_id, ChatRoom.created_at)
+Index("ix_chat_rooms_persona_id", ChatRoom.persona_id)
+Index(
+    "ix_chat_rooms_scenario_id",
+    ChatRoom.scenario_id,
+    sqlite_where=ChatRoom.scenario_id.is_not(None),
+    postgresql_where=ChatRoom.scenario_id.is_not(None),
+)
+Index(
+    "ix_chat_rooms_user_completed_at",
+    ChatRoom.user_id,
+    ChatRoom.completed_at.desc(),
+    sqlite_where=ChatRoom.completed_at.is_not(None),
+    postgresql_where=ChatRoom.completed_at.is_not(None),
 )
 
 # 자유 수다 방(scenario 없는 방)은 사용자-persona 당 하나뿐이다.
@@ -153,6 +190,9 @@ Index(
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_chat_messages_role"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     room_id: Mapped[str] = mapped_column(
@@ -180,6 +220,18 @@ class ChatFeedback(Base):
             "prompt_version",
             name="uq_chat_feedback_context",
         ),
+        CheckConstraint(
+            "score >= 0 AND score <= 100", name="ck_chat_feedbacks_score_range"
+        ),
+        CheckConstraint(
+            "appropriateness_score IS NULL OR "
+            "(appropriateness_score >= 0 AND appropriateness_score <= 100)",
+            name="ck_chat_feedbacks_appropriateness_range",
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds >= 0",
+            name="ck_chat_feedbacks_duration_seconds",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
@@ -196,8 +248,94 @@ class ChatFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
     )
+    appropriateness_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    naturalness_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    summary_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     room: Mapped[ChatRoom] = relationship(back_populates="feedbacks")
 
 
 Index("ix_chat_feedbacks_room_id_created_at", ChatFeedback.room_id, ChatFeedback.created_at)
+Index("ix_chat_feedbacks_last_message_id", ChatFeedback.last_message_id)
+
+
+class ChatMessageFeedback(Base):
+    """사용자 메시지 한 건에 대한 세부 표현 피드백."""
+
+    __tablename__ = "chat_message_feedbacks"
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id", "model", "prompt_version", name="uq_message_feedback_model_prompt"
+        ),
+        CheckConstraint(
+            "score BETWEEN 0 AND 100", name="chat_message_feedbacks_score_check"
+        ),
+        CheckConstraint(
+            "honorifics_score BETWEEN 0 AND 25",
+            name="chat_message_feedbacks_honorifics_score_check",
+        ),
+        CheckConstraint(
+            "politeness_score BETWEEN 0 AND 25",
+            name="chat_message_feedbacks_politeness_score_check",
+        ),
+        CheckConstraint(
+            "context_fit_score BETWEEN 0 AND 25",
+            name="chat_message_feedbacks_context_fit_score_check",
+        ),
+        CheckConstraint(
+            "naturalness_score BETWEEN 0 AND 25",
+            name="chat_message_feedbacks_naturalness_score_check",
+        ),
+        CheckConstraint(
+            "verdict IN ('natural', 'needs_practice')",
+            name="chat_message_feedbacks_verdict_check",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    room_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    honorifics_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    politeness_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    context_fit_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    naturalness_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    corrected_sentence: Mapped[str] = mapped_column(Text, nullable=False)
+    strengths: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    improvements: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    room: Mapped[ChatRoom] = relationship(back_populates="message_feedbacks")
+
+
+Index("ix_chat_message_feedbacks_message_id", ChatMessageFeedback.message_id)
+Index(
+    "ix_chat_message_feedbacks_room_created",
+    ChatMessageFeedback.room_id,
+    ChatMessageFeedback.created_at,
+)

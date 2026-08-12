@@ -44,7 +44,9 @@ class CorsPreflightTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         # 자격 증명을 쓰므로 출처는 와일드카드가 아니라 요청 출처가 그대로 돌아와야 한다.
-        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+        self.assertEqual(
+            response.headers["access-control-allow-origin"], "http://localhost:5173"
+        )
         self.assertEqual(response.headers["access-control-allow-credentials"], "true")
         self.assertIn("DELETE", response.headers["access-control-allow-methods"])
         self.assertIn("authorization", response.headers["access-control-allow-headers"].lower())

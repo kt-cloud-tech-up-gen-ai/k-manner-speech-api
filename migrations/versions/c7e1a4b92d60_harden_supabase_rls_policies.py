@@ -1,14 +1,13 @@
-"""Restrict Supabase Data API with authenticated ownership policies.
+"""Supabase Data API 권한과 소유권 RLS 정책을 강화한다.
 
-Revision ID: a1c4e8f52b70
-Revises: f8b3c9d21a40
-Create Date: 2026-08-11
+Revision ID: c7e1a4b92d60
+Revises: b6d9f4e81a32
 """
 
 from alembic import op
 
-revision = "a1c4e8f52b70"
-down_revision = "f8b3c9d21a40"
+revision = "c7e1a4b92d60"
+down_revision = "b6d9f4e81a32"
 branch_labels = None
 depends_on = None
 
@@ -43,7 +42,7 @@ def upgrade() -> None:
     if not _is_postgresql():
         return
 
-    # AC-RLS-OWNERSHIP-MATRIX: the browser role receives only the grants below.
+    # AC-RLS-OWNERSHIP-MATRIX: 브라우저 역할은 아래 권한과 소유권 정책만 사용한다.
     all_tables = ", ".join(f"public.{table}" for table in (*CATALOG_TABLES, *OWNED_TABLES))
     _execute(f"REVOKE ALL PRIVILEGES ON TABLE {all_tables} FROM anon, authenticated")
 
@@ -88,9 +87,7 @@ def downgrade() -> None:
         return
 
     for table in CATALOG_TABLES:
-        _execute(
-            f'DROP POLICY IF EXISTS "kms_{table}_authenticated_read" ON public.{table}'
-        )
+        _execute(f'DROP POLICY IF EXISTS "kms_{table}_authenticated_read" ON public.{table}')
     for table in OWNED_TABLES:
         _execute(f'DROP POLICY IF EXISTS "kms_{table}_owner_all" ON public.{table}')
 
