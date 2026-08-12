@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.csrf import CsrfMiddleware
 from app.core.errors import install_error_handlers
-from app.routers import auth, catalog, chat, health, rooms, voice
+from app.routers import auth, catalog, chat, health, rooms, voice, web_speech
+from app.routers.user_input import router as user_input_router
 
 # 기동 시 스키마를 만들지 않는다. 스키마의 유일한 출처는 Alembic이다(`alembic upgrade head`).
 #
@@ -32,3 +33,5 @@ app.include_router(chat.router)
 app.include_router(catalog.router)
 app.include_router(rooms.router)
 app.include_router(voice.router)
+app.include_router(web_speech.router)
+app.include_router(user_input_router, prefix="/api/v1")

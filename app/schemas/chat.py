@@ -2,14 +2,18 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.user_input import TextModelAnalysis
+
 
 class ChatRequest(BaseModel):
     persona: str
     question: str
+    analysis: TextModelAnalysis | None = None
 
 
 class ChatResponse(BaseModel):
     answer: str
+    response_style: str | None = None
 
 
 class GenerationConfig(BaseModel):
