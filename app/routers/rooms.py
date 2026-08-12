@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import AuthUser, CurrentUser
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import get_db
+from app.models.catalog import Scenario
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.schemas.rooms import (
     ChatMessageListResponse,
@@ -96,6 +96,22 @@ def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
     )
 
 
+def _scenario_prompt_context(scenario: Scenario | None) -> dict[str, object] | None:
+    """ORM 객체에서 채팅 프롬프트가 사용하는 시나리오 필드만 분리한다."""
+    if scenario is None:
+        return None
+    return {
+        "id": scenario.id,
+        "description": scenario.description,
+        "time_context": scenario.time_context,
+        "place_context": scenario.place_context,
+        "communication_goal": scenario.communication_goal,
+        "end_condition": scenario.end_condition,
+        "max_turns": scenario.max_turns,
+        "turn_limit_exit_line": scenario.turn_limit_exit_line,
+    }
+
+
 @router.post("/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(
     request: CreateRoomRequest, user: CurrentUser, db: Session = Depends(get_db)
@@ -165,9 +181,7 @@ def list_rooms(user: CurrentUser, db: Session = Depends(get_db)) -> RoomListResp
     알면 그 사람의 방 목록을 그대로 조회할 수 있었다.
     """
     rooms = db.scalars(
-        select(ChatRoom)
-        .where(ChatRoom.user_id == user.id)
-        .order_by(ChatRoom.created_at.desc())
+        select(ChatRoom).where(ChatRoom.user_id == user.id).order_by(ChatRoom.created_at.desc())
     ).all()
     return RoomListResponse(rooms=[_to_room_response(room) for room in rooms])
 
@@ -205,18 +219,12 @@ def send_message(
     user: CurrentUser,
     db: Session = Depends(get_db),
 ) -> SendMessageResponse:
-    """사용자 메시지를 저장하고 persona 응답을 생성해 함께 저장한다. (KAN-65)
-
-    TODO(KAN-59/KAN-65): room.scenario_id를 저장만 하고 프롬프트에는 반영하지 않는다.
-      build_chat_prompt가 modes 번들을 받도록 확장해 시나리오(면접/역할극)를 적용할 것.
-    """
+    """사용자 메시지를 저장하고 persona·scenario 응답을 생성해 함께 저장한다. (KAN-65)"""
     room = _get_room_or_404(db, room_id, user)
 
     question = request.question.strip()
     if not question:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="질문을 입력해 주세요."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="질문을 입력해 주세요.")
 
     history = [
         {"role": message.role, "content": message.content}
@@ -227,6 +235,9 @@ def send_message(
     db.add(user_message)
     db.commit()
 
+    scenario = catalog.find_scenario(db, room.scenario_id) if room.scenario_id else None
+    scenario_context = _scenario_prompt_context(scenario)
+
     response_style = None
     if request.analysis is not None:
         generation = generate_structured_answer(
@@ -234,11 +245,17 @@ def send_message(
             persona=room.persona_id,
             history=history,
             analysis=request.analysis.model_dump(mode="json"),
+            scenario=scenario_context,
         )
         answer = generation.answer
         response_style = generation.response_style
     else:
-        answer = generate_answer(question, persona=room.persona_id, history=history)
+        answer = generate_answer(
+            question,
+            persona=room.persona_id,
+            history=history,
+            scenario=scenario_context,
+        )
 
     assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
     db.add(assistant_message)

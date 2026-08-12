@@ -1,9 +1,10 @@
 """LangChain Google Gemini provider를 사용하는 채팅 서비스."""
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import CHAT_MODEL, get_api_key
@@ -32,8 +33,16 @@ def generate_answer(
     question: str,
     persona: str,
     history: list[dict[str, str]] | None = None,
+    scenario: Mapping[str, object] | None = None,
 ) -> str:
-    return invoke_llm(build_chat_prompt(question, persona=persona, history=history))
+    return invoke_llm(
+        build_chat_prompt(
+            question,
+            persona=persona,
+            history=history,
+            scenario=scenario,
+        )
+    )
 
 
 def generate_structured_answer(
@@ -41,9 +50,14 @@ def generate_structured_answer(
     persona: str,
     analysis: dict[str, str],
     history: list[dict[str, str]] | None = None,
+    scenario: Mapping[str, object] | None = None,
 ) -> ChatGeneration:
     prompt = build_chat_prompt(
-        question, persona=persona, history=history, analysis=analysis
+        question,
+        persona=persona,
+        history=history,
+        analysis=analysis,
+        scenario=scenario,
     )
     return invoke_structured_llm(prompt)
 
@@ -77,9 +91,7 @@ def invoke_llm(prompt: str, temperature: float = 0.7) -> str:
     try:
         from langchain_core.messages import HumanMessage
 
-        response = get_chat_model(api_key, temperature).invoke(
-            [HumanMessage(content=prompt)]
-        )
+        response = get_chat_model(api_key, temperature).invoke([HumanMessage(content=prompt)])
         answer = extract_text_from_response(response)
         if not answer.strip():
             raise RuntimeError("채팅 응답에 텍스트가 없습니다.")

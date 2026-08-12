@@ -5,8 +5,9 @@
 """
 
 import logging
+from collections.abc import Mapping
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -30,8 +31,16 @@ def generate_answer(
     question: str,
     persona: str,
     history: list[dict[str, str]] | None = None,
+    scenario: Mapping[str, object] | None = None,
 ) -> str:
-    return invoke_llm(build_chat_prompt(question, persona=persona, history=history))
+    return invoke_llm(
+        build_chat_prompt(
+            question,
+            persona=persona,
+            history=history,
+            scenario=scenario,
+        )
+    )
 
 
 def generate_structured_answer(
@@ -39,9 +48,14 @@ def generate_structured_answer(
     persona: str,
     analysis: dict[str, str],
     history: list[dict[str, str]] | None = None,
+    scenario: Mapping[str, object] | None = None,
 ) -> ChatGeneration:
     prompt = build_chat_prompt(
-        question, persona=persona, history=history, analysis=analysis
+        question,
+        persona=persona,
+        history=history,
+        analysis=analysis,
+        scenario=scenario,
     )
     return invoke_structured_llm(prompt)
 

@@ -476,7 +476,7 @@ class SendMessageTests(ApiTestCase):
             answer="안녕하세요! 만나서 반가워요.",
             response_style="따뜻하고 정중한 말투",
         )
-        room_id = self._create_room().json()["id"]
+        room_id = self._create_room(scenario_id="interview").json()["id"]
 
         response = self.client.post(
             f"/rooms/{room_id}/messages",
@@ -502,6 +502,10 @@ class SendMessageTests(ApiTestCase):
             },
         )
         self.assertEqual(mock_generate.call_count, 1)
+        self.assertEqual(
+            mock_generate.call_args.kwargs["scenario"]["communication_goal"],
+            "면접관의 질문에 존댓말로 끝까지 답한다",
+        )
 
     @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!", autospec=True)
     def test_message_and_answer_are_persisted(self, mock_generate):
@@ -517,6 +521,38 @@ class SendMessageTests(ApiTestCase):
         self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
         self.assertEqual(messages[0]["content"], "안녕")
         self.assertEqual(mock_generate.call_args.kwargs["persona"], "doyun")
+
+    @patch("app.routers.rooms.generate_answer", return_value="본관 1층이에요.", autospec=True)
+    def test_room_scenario_is_passed_to_answer_generator(self, mock_generate):
+        room_id = self._create_room(scenario_id="interview").json()["id"]
+
+        response = self.client.post(
+            f"/rooms/{room_id}/messages", json={"question": "어디로 가면 될까요?"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            mock_generate.call_args.kwargs["scenario"],
+            {
+                "id": "interview",
+                "description": "면접 상황 대화 연습",
+                "time_context": "평일 오전",
+                "place_context": "회사 회의실",
+                "communication_goal": "면접관의 질문에 존댓말로 끝까지 답한다",
+                "end_condition": "면접관이 마무리 인사를 하면 종료",
+                "max_turns": 20,
+                "turn_limit_exit_line": None,
+            },
+        )
+
+    @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!", autospec=True)
+    def test_free_talk_passes_no_scenario_context(self, mock_generate):
+        room_id = self._create_room().json()["id"]
+
+        response = self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕하세요"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(mock_generate.call_args.kwargs["scenario"])
 
     @patch("app.routers.rooms.generate_answer", return_value="ok", autospec=True)
     def test_previous_history_is_passed_to_llm(self, mock_generate):
@@ -545,7 +581,7 @@ class SendMessageTests(ApiTestCase):
         있다(rooms.py가 존재하지 않는 history 인자를 넘겼고 스위트는 green이었다).
         여기서는 LLM 호출 직전 지점만 막아 그 사이 코드가 전부 실제로 실행되게 한다.
         """
-        room_id = self._create_room().json()["id"]
+        room_id = self._create_room(scenario_id="interview").json()["id"]
         self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕하세요"})
         response = self.client.post(
             f"/rooms/{room_id}/messages", json={"question": "그럼 언제 만날까요?"}
@@ -556,6 +592,10 @@ class SendMessageTests(ApiTestCase):
         self.assertIn("## 대화 이력", prompt)
         self.assertIn("사용자: 안녕하세요", prompt)
         self.assertIn("상대: 네 반가워요", prompt)
+        self.assertIn("## 현재 대화 시나리오", prompt)
+        self.assertIn("면접 상황 대화 연습", prompt)
+        self.assertIn("면접관의 질문에 존댓말로 끝까지 답한다", prompt)
+        self.assertIn("면접관이 마무리 인사를 하면 종료", prompt)
         self.assertIn("사용자 질문: 그럼 언제 만날까요?", prompt)
 
 
