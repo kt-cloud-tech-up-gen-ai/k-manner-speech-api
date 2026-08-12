@@ -1,44 +1,24 @@
-"""Gemini로 사용자 발화의 한국어 표현을 구조화해 평가한다."""
+"""OpenAI Responses API로 사용자 발화의 한국어 표현을 구조화해 평가한다."""
 
+import hashlib
 import json
 import logging
-from functools import lru_cache
 from typing import Literal
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.core.config import FEEDBACK_MODEL, get_api_key
+from app.core.config import FEEDBACK_MODEL
+from app.services.openai_client import OpenAIConfigurationError, get_openai_client
 
 logger = logging.getLogger(__name__)
 
-
-class FeedbackConfigurationError(RuntimeError):
-    """Gemini feedback model or API key is unavailable."""
-
-
-@lru_cache(maxsize=1)
-def get_feedback_model():
-    api_key = get_api_key()
-    if not api_key:
-        raise FeedbackConfigurationError("GEMINI_API_KEY가 설정되지 않았습니다.")
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-    except ImportError as exc:
-        raise FeedbackConfigurationError(
-            "Gemini SDK가 설치되지 않았습니다. requirements.txt를 설치해 주세요."
-        ) from exc
-    return ChatGoogleGenerativeAI(
-        model=FEEDBACK_MODEL,
-        google_api_key=api_key,
-        temperature=0,
-    )
 
 # chat_feedbacks의 유니크 키(room_id, last_message_id, model, prompt_version)에서
 # "어떤 프롬프트 계약으로 만든 결과인가"를 담당한다. LLM에 넣는 내용(지시문·입력 payload)이
 # 바뀌면 반드시 올린다 — 올리지 않으면 대화가 더 진행되지 않은 방은 이전 계약으로 채점된
 # 결과를 계속 캐시에서 돌려받는다. v2에서 시나리오의 communication_goal을 입력에 추가했다.
-FEEDBACK_PROMPT_VERSION = "expression-feedback-v3-gemini"
+FEEDBACK_PROMPT_VERSION = "expression-feedback-v2"
 FEEDBACK_MESSAGE_LIMIT = 20
 MAX_MESSAGE_CHARS = 4_000
 
@@ -98,6 +78,10 @@ class FeedbackMessage(BaseModel):
     content: str
 
 
+def make_safety_identifier(user_id: str) -> str:
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+
+
 def build_feedback_input(
     messages: list[FeedbackMessage],
     *,
@@ -135,45 +119,48 @@ def generate_feedback(
     persona: str,
     scenario: str | None,
     communication_goal: str | None,
+    user_id: str,
 ) -> FeedbackResult:
     try:
-        model = get_feedback_model().with_structured_output(FeedbackResult)
-        response = model.invoke(
-            FEEDBACK_INSTRUCTIONS
-            + "\n\n<feedback_input_json>\n"
-            + build_feedback_input(
+        response = get_openai_client().responses.parse(
+            model=FEEDBACK_MODEL,
+            reasoning={"effort": "low"},
+            instructions=FEEDBACK_INSTRUCTIONS,
+            input=build_feedback_input(
                 messages,
                 persona=persona,
                 scenario=scenario,
                 communication_goal=communication_goal,
-            )
-            + "\n</feedback_input_json>"
+            ),
+            text_format=FeedbackResult,
+            store=False,
+            safety_identifier=make_safety_identifier(user_id),
         )
-    except FeedbackConfigurationError as exc:
+    except OpenAIConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="표현 피드백 AI가 구성되지 않았습니다.",
         ) from exc
     except Exception as exc:
         if isinstance(exc, TimeoutError) or type(exc).__name__ == "APITimeoutError":
-            logger.exception("Gemini feedback request timed out")
+            logger.exception("OpenAI feedback request timed out")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="표현 피드백 생성 시간이 초과되었습니다.",
             ) from exc
-        logger.exception("Gemini feedback request failed")
+        logger.exception("OpenAI feedback request failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="표현 피드백을 생성하지 못했습니다.",
         ) from exc
 
-    if response is None:
-        logger.warning("Gemini feedback response did not contain parsed output")
+    if response.output_parsed is None:
+        logger.warning("OpenAI feedback response did not contain parsed output")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="표현 피드백 응답을 해석하지 못했습니다.",
         )
-    result = FeedbackResult.model_validate(response)
+    result = FeedbackResult.model_validate(response.output_parsed)
 
     # 화면의 총점과 세부 점수가 어긋나지 않도록 서버에서 최종 합계를 확정한다.
     result.score = result.category_scores.total

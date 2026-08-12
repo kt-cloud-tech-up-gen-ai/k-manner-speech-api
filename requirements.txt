@@ -20,6 +20,7 @@ psycopg[binary]==3.3.4
 # 있었으므로 명시적으로 고정한다.
 langchain-core==1.5.3
 langchain-google-genai==4.3.2
+openai==2.53.0
 
 # --- 미사용 (제거 후보) ---
 # 아래 4개는 app/·tests/ 어디에서도 import 되지 않는다(2026-08-07 grep 확인).
