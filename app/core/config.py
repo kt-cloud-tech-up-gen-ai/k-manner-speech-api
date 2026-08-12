@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
+PROMPTS_DIR = ROOT / "app" / "prompts"
 
 load_dotenv(ROOT / ".env")
 load_dotenv()
@@ -65,11 +66,14 @@ def get_tts_settings() -> TtsSettings:
     api_key = (get_api_key() or "").strip()
     if not api_key:
         raise RuntimeError(".env 파일에 GOOGLE_API_KEY 또는 GEMINI_API_KEY를 입력하세요.")
+    output_dir = Path(os.getenv("TTS_OUTPUT_DIR", "app/outputs"))
+    if not output_dir.is_absolute():
+        output_dir = ROOT / output_dir
     return TtsSettings(
         google_api_key=api_key,
         tts_model=os.getenv("TTS_MODEL", "gemini-3.1-flash-tts-preview"),
         voice_name=os.getenv("GEMINI_TTS_VOICE_NAME", "Kore"),
-        output_dir=Path(os.getenv("TTS_OUTPUT_DIR", "app/outputs")),
+        output_dir=output_dir,
     )
 
 

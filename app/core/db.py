@@ -7,11 +7,16 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DEFAULT_DATABASE_URL = "DATABASE_URL=postgresql+psycopg://postgres.dlgjsarbbblmsscxrqrt:minjoon1920!@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres"
+
+class DatabaseConfigurationError(RuntimeError):
+    """Database access was requested without an explicit target."""
 
 
 def get_database_url() -> str:
-    return os.getenv("DATABASE_URL") or DEFAULT_DATABASE_URL
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if not database_url:
+        raise DatabaseConfigurationError("DATABASE_URL이 설정되지 않았습니다.")
+    return database_url
 
 
 class Base(DeclarativeBase):

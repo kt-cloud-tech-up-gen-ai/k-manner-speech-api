@@ -10,6 +10,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.config import get_cors_allow_origins
+from app.core.db import DatabaseConfigurationError
+
 logger = logging.getLogger("app.http")
 
 
@@ -37,10 +40,18 @@ def _message(detail: Any, fallback: str) -> str:
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    @app.exception_handler(StarletteHTTPException)
-    async def handle_http_exception(
-        _request: Request, exc: StarletteHTTPException
+    @app.exception_handler(DatabaseConfigurationError)
+    async def handle_database_configuration(
+        _request: Request, _exc: DatabaseConfigurationError
     ) -> JSONResponse:
+        return error_response(
+            503,
+            "SERVICE_UNAVAILABLE",
+            "데이터베이스가 구성되지 않았습니다.",
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
         response = error_response(
             exc.status_code,
             _code_for(exc.status_code),
@@ -69,7 +80,8 @@ def install_error_handlers(app: FastAPI) -> None:
             "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
         )
         response.headers["X-Request-ID"] = request_id
-        if request.headers.get("Origin") == "http://localhost:5173":
-            response.headers["Access-Control-Allow-Origin"] = "http://localhost:5173"
+        origin = request.headers.get("Origin")
+        if origin in get_cors_allow_origins():
+            response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
