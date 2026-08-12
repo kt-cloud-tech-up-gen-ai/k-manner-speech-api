@@ -6,7 +6,7 @@
 
 import logging
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -40,9 +40,7 @@ def generate_structured_answer(
     analysis: dict[str, str],
     history: list[dict[str, str]] | None = None,
 ) -> ChatGeneration:
-    prompt = build_chat_prompt(
-        question, persona=persona, history=history, analysis=analysis
-    )
+    prompt = build_chat_prompt(question, persona=persona, history=history, analysis=analysis)
     return invoke_structured_llm(prompt)
 
 

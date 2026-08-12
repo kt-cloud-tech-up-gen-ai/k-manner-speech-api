@@ -10,11 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.auth import CurrentUser
 from app.core.config import FEEDBACK_MODEL, get_settings, get_tts_settings
 from app.core.db import get_db
-from app.models.chat import ChatFeedback, ChatMessage
-from app.routers.rooms import _get_room_or_404, _to_message_response
+from app.core.guest import Actor, get_actor
+from app.models.chat import ChatFeedback, ChatMessage, ChatRoomStatus
+from app.routers.rooms import GUEST_MAX_TURNS, _get_room_or_404, _to_message_response
 from app.schemas.room_conversation import (
     RoomConversationContext,
     RoomTurnResponse,
@@ -61,10 +61,12 @@ def get_room_conversation_service() -> RoomConversationService:
 def _process_room_turn(
     room_id: str,
     request: TextRoomTurnRequest | VoiceRoomTurnRequest,
-    user: CurrentUser,
+    actor: Actor,
     db: Session,
 ) -> RoomTurnResponse:
-    room = _get_room_or_404(db, room_id, user)
+    room = _get_room_or_404(db, room_id, actor)
+    if room.status is not ChatRoomStatus.IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="이미 종료된 채팅방입니다.")
     text = request.text if isinstance(request, TextRoomTurnRequest) else request.transcript
     clean_text = text.strip()
     history = [
@@ -89,7 +91,7 @@ def _process_room_turn(
     )
     context = RoomConversationContext(
         room_id=room.id,
-        user_id=room.user_id,
+        user_id=actor.user_id or actor.guest_id or "unknown",
         persona_id=room.persona_id,
         persona_description=persona.description if persona else room.persona_id,
         scenario_description=scenario.description if scenario else None,
@@ -116,6 +118,10 @@ def _process_room_turn(
         result_json=result.feedback.model_dump(mode="json"),
     )
     db.add_all([assistant_message, feedback])
+    if actor.is_guest:
+        room.turn_count += 1
+        if room.turn_count >= GUEST_MAX_TURNS:
+            room.status = ChatRoomStatus.COMPLETED
     db.commit()
     db.refresh(assistant_message)
     return RoomTurnResponse(
@@ -131,30 +137,30 @@ def _process_room_turn(
 def process_text_turn(
     room_id: str,
     request: TextRoomTurnRequest,
-    user: CurrentUser,
+    actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
 ) -> RoomTurnResponse:
-    return _process_room_turn(room_id, request, user, db)
+    return _process_room_turn(room_id, request, actor, db)
 
 
 @router.post("/rooms/{room_id}/turns/voice", response_model=RoomTurnResponse)
 def process_voice_turn(
     room_id: str,
     request: VoiceRoomTurnRequest,
-    user: CurrentUser,
+    actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
 ) -> RoomTurnResponse:
-    return _process_room_turn(room_id, request, user, db)
+    return _process_room_turn(room_id, request, actor, db)
 
 
 @router.get("/rooms/{room_id}/audio/{filename}", response_class=FileResponse)
 def get_generated_audio(
     room_id: str,
     filename: str,
-    user: CurrentUser,
+    actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    _get_room_or_404(db, room_id, user)
+    _get_room_or_404(db, room_id, actor)
     if Path(filename).name != filename or not filename.lower().endswith(".wav"):
         raise HTTPException(status_code=404, detail="음성 파일을 찾을 수 없습니다.")
     output_dir = get_tts_settings().output_dir.resolve()
@@ -166,9 +172,11 @@ def get_generated_audio(
 
 @router.get("/rooms/{room_id}/messages", response_model=ChatMessageListResponse)
 def list_messages(
-    room_id: str, user: CurrentUser, db: Session = Depends(get_db)
+    room_id: str,
+    actor: Actor = Depends(get_actor),
+    db: Session = Depends(get_db),
 ) -> ChatMessageListResponse:
-    room = _get_room_or_404(db, room_id, user)
+    room = _get_room_or_404(db, room_id, actor)
     return ChatMessageListResponse(
         messages=[_to_message_response(message) for message in room.messages]
     )
@@ -178,12 +186,14 @@ def list_messages(
 def send_message(
     room_id: str,
     request: SendMessageRequest,
-    user: CurrentUser,
+    actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
 ) -> SendMessageResponse:
     """기존 텍스트 메시지 API 호환 경로. 새 앱은 turns/text를 사용한다."""
 
-    room = _get_room_or_404(db, room_id, user)
+    room = _get_room_or_404(db, room_id, actor)
+    if room.status is not ChatRoomStatus.IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="이미 종료된 채팅방입니다.")
     question = request.question.strip()
     if not question:
         raise HTTPException(
@@ -212,6 +222,10 @@ def send_message(
 
     assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
     db.add(assistant_message)
+    if actor.is_guest:
+        room.turn_count += 1
+        if room.turn_count >= GUEST_MAX_TURNS:
+            room.status = ChatRoomStatus.COMPLETED
     db.commit()
     return SendMessageResponse(
         answer=answer,
@@ -222,11 +236,15 @@ def send_message(
 
 @router.post("/rooms/{room_id}/feedback", response_model=FeedbackResponse)
 def request_feedback(
-    room_id: str, user: CurrentUser, db: Session = Depends(get_db)
+    room_id: str,
+    actor: Actor = Depends(get_actor),
+    db: Session = Depends(get_db),
 ) -> FeedbackResponse:
     """기존 수동 피드백 API. 새 turns API는 피드백을 자동 반환한다."""
 
-    room = _get_room_or_404(db, room_id, user)
+    room = _get_room_or_404(db, room_id, actor)
+    if actor.is_guest:
+        raise HTTPException(status_code=403, detail="게스트 대화에는 수동 피드백을 제공하지 않습니다.")
     if not any(message.role == "user" for message in room.messages):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -257,7 +275,7 @@ def request_feedback(
         persona=persona.description if persona else room.persona_id,
         scenario=scenario.description if scenario else room.scenario_id,
         communication_goal=scenario.communication_goal if scenario else None,
-        user_id=room.user_id,
+        user_id=actor.user_id or actor.guest_id,
     )
     feedback = ChatFeedback(
         room_id=room.id,

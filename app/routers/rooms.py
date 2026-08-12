@@ -1,11 +1,10 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.auth import AuthUser, CurrentUser
 from app.core.db import get_db
+from app.core.guest import Actor, get_actor
 from app.models.chat import ChatMessage, ChatRoom
 from app.schemas.rooms import (
     ChatMessageResponse,
@@ -16,21 +15,26 @@ from app.schemas.rooms import (
 from app.services import catalog
 
 router = APIRouter(tags=["rooms"])
+GUEST_MAX_TURNS = 3
 
-# 이 라우터의 모든 엔드포인트는 로그인이 필요하다. 방 주인은 토큰이 정하고,
+# 방 주인은 로그인 사용자 ID 또는 서버가 서명한 게스트 ID가 정하고,
 # room_id로 접근하는 엔드포인트는 _get_room_or_404가 소유자까지 확인한다.
 # TODO(KAN-47/scale): 채팅방 목록·채팅 내역에 페이지네이션이 없다. 대화가 길어지면
 #   전체 메시지를 한 번에 반환하므로 limit/cursor 파라미터가 필요하다.
 
 
-def _get_room_or_404(db: Session, room_id: str, user: AuthUser) -> ChatRoom:
+def _get_room_or_404(db: Session, room_id: str, actor: Actor) -> ChatRoom:
     """내 방만 돌려준다. 남의 방은 없는 것과 같게 취급한다.
 
     "없는 방"과 "남의 방"에 같은 404를 주는 것은 의도적이다. 403으로 나누면 응답만으로
     그 room_id가 실재한다는 사실을 알려 주게 되고, id를 훑어 남의 방 존재를 확인할 수 있다.
     """
     room = db.get(ChatRoom, room_id)
-    if room is None or room.user_id != user.id:
+    owned = room is not None and (
+        (actor.user_id is not None and room.user_id == actor.user_id)
+        or (actor.guest_id is not None and room.guest_id == actor.guest_id)
+    )
+    if not owned:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="채팅방을 찾을 수 없습니다."
         )
@@ -65,10 +69,13 @@ def _to_room_response(room: ChatRoom) -> RoomResponse:
     return RoomResponse(
         id=room.id,
         user_id=room.user_id,
+        guest=room.guest_id is not None,
         persona_id=room.persona_id,
         scenario_id=room.scenario_id,
         name=room.name,
         created_at=room.created_at,
+        status=room.status.value,
+        turn_count=room.turn_count,
     )
 
 
@@ -83,7 +90,9 @@ def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
 
 @router.post("/rooms", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 def create_room(
-    request: CreateRoomRequest, user: CurrentUser, db: Session = Depends(get_db)
+    request: CreateRoomRequest,
+    actor: Actor = Depends(get_actor),
+    db: Session = Depends(get_db),
 ) -> RoomResponse:
     """채팅방을 생성한다. (KAN-60)
 
@@ -120,7 +129,8 @@ def create_room(
             )
 
     room = ChatRoom(
-        user_id=user.id,
+        user_id=actor.user_id,
+        guest_id=actor.guest_id,
         persona_id=persona.id,
         scenario_id=scenario.id if scenario else None,
         name=request.name,
@@ -136,14 +146,16 @@ def create_room(
         # 시나리오가 있는 방의 IntegrityError는 이 제약과 무관하므로 손대지 않는다.
         # 구분하지 않으면 FK 위반 같은 다른 오류에 "자유 대화방이 이미 있다"고 답하게 된다.
         db.rollback()
-        if scenario is None:
-            _reject_duplicate_free_talk_room(db, user.id, persona.id)
+        if scenario is None and actor.user_id is not None:
+            _reject_duplicate_free_talk_room(db, actor.user_id, persona.id)
         raise
     return _to_room_response(room)
 
 
 @router.get("/rooms", response_model=RoomListResponse)
-def list_rooms(user: CurrentUser, db: Session = Depends(get_db)) -> RoomListResponse:
+def list_rooms(
+    actor: Actor = Depends(get_actor), db: Session = Depends(get_db)
+) -> RoomListResponse:
     """내 채팅방 목록을 최신순으로 반환한다. (KAN-61)
 
     누구의 목록인지는 토큰이 정한다. 예전에는 `?user_id=`를 받았는데, 그러면 남의 id만
@@ -151,14 +163,20 @@ def list_rooms(user: CurrentUser, db: Session = Depends(get_db)) -> RoomListResp
     """
     rooms = db.scalars(
         select(ChatRoom)
-        .where(ChatRoom.user_id == user.id)
+        .where(
+            ChatRoom.user_id == actor.user_id
+            if actor.user_id is not None
+            else ChatRoom.guest_id == actor.guest_id
+        )
         .order_by(ChatRoom.created_at.desc())
     ).all()
     return RoomListResponse(rooms=[_to_room_response(room) for room in rooms])
 
 
 @router.delete("/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_room(room_id: str, user: CurrentUser, db: Session = Depends(get_db)) -> None:
+def delete_room(
+    room_id: str, actor: Actor = Depends(get_actor), db: Session = Depends(get_db)
+) -> None:
     """내 채팅방을 지운다.
 
     대화 내역과 피드백도 함께 사라진다(모델의 cascade). 되돌릴 수 없다 — 숨김 처리가
@@ -168,5 +186,5 @@ def delete_room(room_id: str, user: CurrentUser, db: Session = Depends(get_db)) 
 
     남의 방이나 없는 방은 똑같이 404다. 성공은 본문 없이 204.
     """
-    db.delete(_get_room_or_404(db, room_id, user))
+    db.delete(_get_room_or_404(db, room_id, actor))
     db.commit()
