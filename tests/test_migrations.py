@@ -19,6 +19,7 @@ CATALOG = "9c1f4b0a7d52"
 PERSONA_SCENARIOS = "b4d7e2a13c60"
 PROGRESS = "c3f1a9d5e274"
 CAMPUS_DIRECTIONS = "d5b8c07f9a13"
+FREE_CHAT_UNIQUE = "e7a2f4c81b09"
 
 
 class MigrationTestCase(unittest.TestCase):

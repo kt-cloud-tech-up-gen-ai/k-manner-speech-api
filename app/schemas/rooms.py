@@ -18,9 +18,7 @@ from app.services.feedback import CategoryScores, FeedbackIssue
 # 분기(`if request.scenario_id:`)를 그냥 통과해 **자유 수다 방으로 조용히 강등**됐고(201),
 # "   "는 카탈로그 조회에 실패해 400이 됐다. 둘 다 "시나리오를 고르려다 값이 빈" 요청이므로
 # 같게 다뤄야 한다. 시나리오를 고르지 않겠다는 뜻은 **필드를 보내지 않거나 null**이다.
-CatalogId = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
-]
+CatalogId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
 class CreateRoomRequest(BaseModel):
@@ -39,11 +37,14 @@ class CreateRoomRequest(BaseModel):
 
 class RoomResponse(BaseModel):
     id: str
-    user_id: str
+    user_id: str | None
+    guest: bool
     persona_id: str
     scenario_id: str | None
     name: str
     created_at: datetime
+    status: str
+    turn_count: int
 
 
 class RoomListResponse(BaseModel):
