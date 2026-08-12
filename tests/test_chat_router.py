@@ -52,9 +52,7 @@ class AskGeminiTests(unittest.TestCase):
             b'{"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}'
         )
 
-        response = ask_gemini(
-            AskGeminiRequest(systemInstruction="system", contents="hello")
-        )
+        response = ask_gemini(AskGeminiRequest(systemInstruction="system", contents="hello"))
 
         sent_request = mock_urlopen.call_args.args[0]
         self.assertNotIn("generationConfig", sent_request.data.decode("utf-8"))

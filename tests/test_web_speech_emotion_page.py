@@ -1,10 +1,7 @@
 import unittest
 from pathlib import Path
 
-
-PAGE = (
-    Path(__file__).resolve().parents[1] / "app" / "static" / "web_speech_test.html"
-)
+PAGE = Path(__file__).resolve().parents[1] / "app" / "static" / "web_speech_test.html"
 
 
 class WebSpeechEmotionPageTests(unittest.TestCase):

@@ -80,9 +80,13 @@ NA_REASONS = {"external-service", "human-visual", "hardware-perf", "manual-appro
 
 EXCLUDE_COPY_DIRS = {
     ".git", ".venv", "venv", "node_modules", "vendor", "target", ".next", "dist",
-    "build", ".gradle", ".pnpm-store", "__pycache__", ".pytest_cache", ".mypy_cache",
+    "build", ".gradle", ".pnpm-store", ".uv-cache", ".uv-python",
+    "__pycache__", ".pytest_cache", ".mypy_cache",
 }
-DEP_LINK_DIRS = {"node_modules", ".venv", "venv", "vendor", ".pnpm-store"}
+# Windows commonly disallows os.symlink without Developer Mode/admin rights.
+# Python virtualenvs are reproducible and Verify commands can recreate them,
+# so only package-manager dependency trees are linked into isolation copies.
+DEP_LINK_DIRS = {"node_modules", "vendor", ".pnpm-store"}
 
 ENV_CACHE_SUBDIRS = ("home", "tmp", "cache", "gocache", "gomodcache", "npmcache")
 SECRET_ENV_PREFIXES = ("AWS_", "GOOGLE_", "GCP_")
@@ -609,8 +613,12 @@ def normalize_output(text: str) -> str:
 
 def run_command(cmd: str, cwd: Path, env: dict, timeout: int = DEFAULT_TIMEOUT):
     """Returns (normalized_text, exit_code, timed_out, limit_hit)."""
+    bash = "/bin/bash"
+    if os.name == "nt":
+        git_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+        bash = str(git_bash)
     proc = subprocess.Popen(
-        ["/bin/bash", "-o", "pipefail", "-c", cmd],
+        [bash, "-o", "pipefail", "-c", cmd],
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -791,7 +799,7 @@ def resolve_git_dir(repo_root: Path) -> Optional[Path]:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--absolute-git-dir"],
-            cwd=str(repo_root), capture_output=True, text=True, timeout=10,
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             p = Path(result.stdout.strip())
@@ -820,6 +828,8 @@ def build_git_env(env: dict, repo_root: Path, copy_root: Path) -> None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=clone_env,
             timeout=DEFAULT_TIMEOUT,
         )
@@ -833,6 +843,8 @@ def build_git_env(env: dict, repo_root: Path, copy_root: Path) -> None:
         ["git", "-C", str(isolated_repo), "remote", "remove", "origin"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=clone_env,
         timeout=10,
     )
@@ -1082,7 +1094,15 @@ GO_TEST_NAME_RE = re.compile(r"^func\s+(Test\w+)\s*\(")
 
 def run_git(args: list, cwd: Path):
     try:
-        proc = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            ["git"] + args,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
         return proc.returncode, proc.stdout
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)

@@ -9,8 +9,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.schemas.user_input import TextUserInputRequest, UserInputAnalysis
-from app.services.user_input_Text import EmotionClassifierService
 from app.services.user_input_pipeline import UserInputPipelineService
+from app.services.user_input_Text import EmotionClassifierService
 
 router = APIRouter(prefix="/user-input", tags=["User Input Analysis"])
 
