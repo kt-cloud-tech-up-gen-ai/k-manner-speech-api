@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class ChatGeneration(BaseModel):
     answer: str = Field(min_length=1, description="사용자에게 보여줄 채팅 답변")
     response_style: str = Field(min_length=1, description="답변에 사용한 말투")
+    goal_achieved: bool = Field(default=False, description="이번 턴까지 시나리오의 종료 조건(communication_goal)이 충족되었으면 true")
 
 
 def get_chat_model(api_key: str, temperature: float = 0.7) -> Any:
