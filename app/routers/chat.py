@@ -17,6 +17,17 @@ def chat(request: ChatRequest) -> ChatResponse:
     if not request.question.strip():
         return ChatResponse(answer="질문을 입력해 주세요.")
 
+    if request.analysis is not None:
+        generation = llm.generate_structured_answer(
+            request.question,
+            persona=request.persona,
+            analysis=request.analysis.model_dump(mode="json"),
+        )
+        return ChatResponse(
+            answer=generation.answer,
+            response_style=generation.response_style,
+        )
+
     answer = llm.generate_answer(request.question, persona=request.persona)
     return ChatResponse(answer=answer)
 

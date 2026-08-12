@@ -6,8 +6,34 @@ from urllib.error import HTTPError, URLError
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.routers.chat import ask_gemini
-from app.schemas.chat import AskGeminiRequest, GenerationConfig
+from app.routers.chat import ask_gemini, chat
+from app.schemas.chat import AskGeminiRequest, ChatRequest, GenerationConfig
+from app.services.llm import ChatGeneration
+
+
+class EmotionAwareStatelessChatTests(unittest.TestCase):
+    @patch("app.routers.chat.llm.generate_structured_answer", autospec=True)
+    def test_analysis_returns_answer_and_response_style(self, mock_generate):
+        mock_generate.return_value = ChatGeneration(
+            answer="안녕하세요! 만나서 반가워요.",
+            response_style="따뜻하고 정중한 말투",
+        )
+
+        response = chat(
+            ChatRequest(
+                persona="doyun",
+                question="안녕하세요",
+                analysis={
+                    "emotion": "보통",
+                    "inferred_style": "정중하고 격식 있는 문어체",
+                    "intent": "인사 및 대화 시작",
+                },
+            )
+        )
+
+        self.assertEqual(response.answer, "안녕하세요! 만나서 반가워요.")
+        self.assertEqual(response.response_style, "따뜻하고 정중한 말투")
+        self.assertEqual(mock_generate.call_count, 1)
 
 
 class AskGeminiTests(unittest.TestCase):
@@ -26,9 +52,7 @@ class AskGeminiTests(unittest.TestCase):
             b'{"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}'
         )
 
-        response = ask_gemini(
-            AskGeminiRequest(systemInstruction="system", contents="hello")
-        )
+        response = ask_gemini(AskGeminiRequest(systemInstruction="system", contents="hello"))
 
         sent_request = mock_urlopen.call_args.args[0]
         self.assertNotIn("generationConfig", sent_request.data.decode("utf-8"))

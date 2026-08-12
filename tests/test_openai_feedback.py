@@ -114,7 +114,7 @@ class GeminiBoundaryTests(unittest.TestCase):
     def test_original_gemini_paths_are_unchanged(self) -> None:
         llm = (ROOT / "app/services/llm.py").read_text(encoding="utf-8")
         gemini = (ROOT / "app/services/gemini.py").read_text(encoding="utf-8")
-        self.assertEqual(config.CHAT_MODEL, "gemini-2.5-flash")
+        self.assertEqual(config.CHAT_MODEL, "gemini-3.1-flash-lite")
         with patch.dict(
             os.environ,
             {
