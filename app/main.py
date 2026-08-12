@@ -1,9 +1,7 @@
 from fastapi import FastAPI
 
-from app.routers import auth, catalog, chat, health, rooms, voice, web_speech
-from app.routers.emotion_tts import router as emotion_tts_router
-from app.routers.speech_pipeline import router as speech_pipeline_router
-from app.routers.user_input import router as user_input_router
+from app.routers import auth, catalog, chat, health, rooms, web_speech
+from app.routers.room_conversation import router as room_conversation_router
 
 # 기동 시 스키마를 만들지 않는다. 스키마의 유일한 출처는 Alembic이다(`alembic upgrade head`).
 #
@@ -22,8 +20,5 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(catalog.router)
 app.include_router(rooms.router)
-app.include_router(voice.router)
 app.include_router(web_speech.router)
-app.include_router(user_input_router, prefix="/api/v1")
-app.include_router(emotion_tts_router, prefix="/api/v1")
-app.include_router(speech_pipeline_router, prefix="/api/v1")
+app.include_router(room_conversation_router)

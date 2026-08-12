@@ -26,7 +26,6 @@ def make_persona(persona_id: str = PERSONA_ID, **overrides) -> Persona:
         "gender": Gender.MALE,
         "description": "도윤 / 캠퍼스 훈남 / 처음 만난 또래",
         "relationship_description": "같은 캠퍼스에서 오늘 처음 만난 또래",
-        "voice_id": None,
     }
     values.update(overrides)
     return Persona(**values)
@@ -42,6 +41,7 @@ def make_scenario(scenario_id: str = SCENARIO_ID, **overrides) -> Scenario:
         "communication_goal": "면접관의 질문에 존댓말로 끝까지 답한다",
         "end_condition": "면접관이 마무리 인사를 하면 종료",
         "max_turns": 20,
+        "title_ko": "면접 상황 대화 연습",
     }
     values.update(overrides)
     return Scenario(**values)
