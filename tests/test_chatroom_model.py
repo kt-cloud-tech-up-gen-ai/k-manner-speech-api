@@ -15,7 +15,8 @@ from tests.catalog_fixtures import seed_catalog
 # (컬럼명, python 타입 문자열, nullable)
 EXPECTED_COLUMNS = {
     "id": ("VARCHAR(32)", False),
-    "user_id": ("VARCHAR(128)", False),
+    "user_id": ("VARCHAR(128)", True),
+    "guest_id": ("VARCHAR(128)", True),
     "persona_id": ("VARCHAR(64)", False),
     "scenario_id": ("VARCHAR(64)", True),
     "name": ("VARCHAR(200)", False),

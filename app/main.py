@@ -1,5 +1,8 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.csrf import CsrfMiddleware
+from app.core.errors import install_error_handlers
 from app.routers import auth, catalog, chat, health, rooms, voice
 
 # 기동 시 스키마를 만들지 않는다. 스키마의 유일한 출처는 Alembic이다(`alembic upgrade head`).
@@ -14,6 +17,15 @@ from app.routers import auth, catalog, chat, health, rooms, voice
 #   기동 훅에서 SDK를 초기화하고 5xx 알람을 1개 이상 설정할 것.
 
 app = FastAPI(title="K-MANNER SPEECH", version="0.0.1")
+install_error_handlers(app)
+app.add_middleware(CsrfMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(chat.router)

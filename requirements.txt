@@ -15,7 +15,6 @@ alembic==1.19.0
 psycopg[binary]==3.3.4
 
 # --- LLM ---
-openai==2.53.0
 # langchain-core: app/services/llm.py, app/routers/routers.py가 langchain_core.messages를
 # 직접 import 하는데 지금까지 선언이 없었다. langchain-google-genai의 전이 의존에 기대고
 # 있었으므로 명시적으로 고정한다.
