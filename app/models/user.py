@@ -11,7 +11,7 @@ PK는 Supabase user id(= AuthUser.id)이며 FK는 걸지 않는다(스키마/인
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -66,6 +66,9 @@ class UserProfile(Base):
 
     # 1. 모국어 — BCP 47 언어 태그(예: "ko", "en-US").
     native_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    learning_goal_other: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # 2. 성별
     gender: Mapped[Gender | None] = mapped_column(

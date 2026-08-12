@@ -10,12 +10,8 @@ load_dotenv(ROOT / ".env")
 load_dotenv()
 
 CHAT_MODEL = "gemini-2.5-flash"
-FEEDBACK_MODEL = os.getenv("FEEDBACK_MODEL", "gpt-5.6-luna")
+FEEDBACK_MODEL = os.getenv("FEEDBACK_MODEL", "gemini-2.5-flash")
 
 
 def get_api_key() -> str | None:
     return os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-
-def get_openai_api_key() -> str | None:
-    return os.getenv("OPENAI_API_KEY")

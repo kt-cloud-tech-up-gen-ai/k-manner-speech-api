@@ -80,9 +80,13 @@ NA_REASONS = {"external-service", "human-visual", "hardware-perf", "manual-appro
 
 EXCLUDE_COPY_DIRS = {
     ".git", ".venv", "venv", "node_modules", "vendor", "target", ".next", "dist",
-    "build", ".gradle", ".pnpm-store", "__pycache__", ".pytest_cache", ".mypy_cache",
+    "build", ".gradle", ".pnpm-store", ".uv-cache", ".uv-python",
+    "__pycache__", ".pytest_cache", ".mypy_cache",
 }
-DEP_LINK_DIRS = {"node_modules", ".venv", "venv", "vendor", ".pnpm-store"}
+# Windows commonly disallows os.symlink without Developer Mode/admin rights.
+# Python virtualenvs are reproducible and Verify commands can recreate them,
+# so only package-manager dependency trees are linked into isolation copies.
+DEP_LINK_DIRS = {"node_modules", "vendor", ".pnpm-store"}
 
 ENV_CACHE_SUBDIRS = ("home", "tmp", "cache", "gocache", "gomodcache", "npmcache")
 SECRET_ENV_PREFIXES = ("AWS_", "GOOGLE_", "GCP_")
@@ -609,8 +613,12 @@ def normalize_output(text: str) -> str:
 
 def run_command(cmd: str, cwd: Path, env: dict, timeout: int = DEFAULT_TIMEOUT):
     """Returns (normalized_text, exit_code, timed_out, limit_hit)."""
+    bash = "/bin/bash"
+    if os.name == "nt":
+        git_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+        bash = str(git_bash)
     proc = subprocess.Popen(
-        ["/bin/bash", "-o", "pipefail", "-c", cmd],
+        [bash, "-o", "pipefail", "-c", cmd],
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

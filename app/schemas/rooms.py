@@ -37,11 +37,14 @@ class CreateRoomRequest(BaseModel):
 
 class RoomResponse(BaseModel):
     id: str
-    user_id: str
+    user_id: str | None
+    guest: bool
     persona_id: str
     scenario_id: str | None
     name: str
     created_at: datetime
+    status: str
+    turn_count: int
 
 
 class RoomListResponse(BaseModel):

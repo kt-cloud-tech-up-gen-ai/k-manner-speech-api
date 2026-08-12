@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -10,6 +10,7 @@ from app.core.auth import (
     WITHDRAW_ERROR_RESPONSES,
     CurrentUser,
     delete_user_account,
+    refresh_session,
     sign_in_with_password,
     sign_up_with_password,
 )
@@ -17,6 +18,7 @@ from app.core.db import get_db
 from app.models.chat import ChatRoom
 from app.models.user import UserLearningGoal, UserProfile
 from app.schemas.auth import (
+    AuthSessionResponse,
     AuthUser,
     LoginResponse,
     MeResponse,
@@ -26,6 +28,51 @@ from app.schemas.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+ACCESS_COOKIE = "access_token"
+REFRESH_COOKIE = "refresh_token"
+GUEST_COOKIE = "guest_session"
+
+
+def _set_session_cookies(response: Response, session: dict) -> None:
+    from app.core.csrf import CSRF_COOKIE, new_csrf_token
+
+    response.set_cookie(
+        ACCESS_COOKIE,
+        session["access_token"],
+        max_age=session.get("expires_in"),
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+    response.set_cookie(
+        REFRESH_COOKIE,
+        session["refresh_token"],
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(), httponly=False, samesite="lax")
+    response.delete_cookie(GUEST_COOKIE)
+
+
+def _browser_session(session: dict) -> AuthSessionResponse:
+    parsed = _to_login_response(session)
+    if parsed.user is None:
+        raise HTTPException(status_code=502, detail="인증 사용자 정보가 없습니다.")
+    return AuthSessionResponse(user=parsed.user)
+
+
+def _purge_request_guest(request: Request, db: Session) -> None:
+    from app.core.guest import decode_guest_cookie
+
+    guest_id = decode_guest_cookie(request.cookies.get(GUEST_COOKIE))
+    if guest_id is None:
+        return
+    rooms = db.scalars(select(ChatRoom).where(ChatRoom.guest_id == guest_id)).all()
+    for room in rooms:
+        db.delete(room)
+    db.commit()
 
 
 def _to_login_response(session: dict) -> LoginResponse:
@@ -42,25 +89,37 @@ def _to_login_response(session: dict) -> LoginResponse:
     )
 
 
-@router.post("/login", response_model=LoginResponse, summary="이메일/비밀번호 로그인")
-def login(form: Annotated[OAuth2PasswordRequestForm, Depends()]) -> LoginResponse:
+@router.post("/login", response_model=AuthSessionResponse, summary="이메일/비밀번호 로그인")
+def login(
+    request: Request,
+    response: Response,
+    form: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: Annotated[Session, Depends(get_db)],
+) -> AuthSessionResponse:
     """Supabase Auth 로그인.
 
     Swagger 우측 상단 **Authorize** 버튼에서 username(=이메일)/password를 입력하면
     발급된 access_token이 이후 요청의 Authorization 헤더에 자동으로 붙는다.
     """
     session = sign_in_with_password(form.username, form.password)
-    return _to_login_response(session)
+    _purge_request_guest(request, db)
+    _set_session_cookies(response, session)
+    return _browser_session(session)
 
 
 @router.post(
     "/signup",
     status_code=status.HTTP_201_CREATED,
-    response_model=LoginResponse,
+    response_model=AuthSessionResponse,
     summary="이메일/비밀번호 회원가입",
     responses=SIGNUP_ERROR_RESPONSES,
 )
-def signup(payload: SignupRequest) -> LoginResponse:
+def signup(
+    request: Request,
+    response: Response,
+    payload: SignupRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> AuthSessionResponse:
     """이메일과 비밀번호로 계정을 만든다. 성공하면 즉시 로그인 상태가 된다.
 
     응답은 로그인(POST /auth/login)과 같은 형태다. 받은 access_token을 이후 요청의
@@ -75,7 +134,26 @@ def signup(payload: SignupRequest) -> LoginResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="이메일 확인(Confirm email)이 켜져 있어 가입 즉시 로그인할 수 없습니다. Supabase 설정을 확인하세요.",
         )
-    return _to_login_response(session)
+    _purge_request_guest(request, db)
+    _set_session_cookies(response, session)
+    return _browser_session(session)
+
+
+@router.post("/refresh", response_model=AuthSessionResponse, summary="세션 갱신")
+def refresh(response: Response, refresh_token: Annotated[str | None, Cookie()] = None):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="갱신할 세션이 없습니다.")
+    session = refresh_session(refresh_token)
+    _set_session_cookies(response, session)
+    return _browser_session(session)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="로그아웃")
+def logout(response: Response) -> None:
+    from app.core.csrf import CSRF_COOKIE
+
+    for name in (ACCESS_COOKIE, REFRESH_COOKIE, CSRF_COOKIE, GUEST_COOKIE):
+        response.delete_cookie(name)
 
 
 EMPTY_PROFILE = ProfileResponse()
@@ -93,6 +171,9 @@ def _load_profile(db: Session, owner_id: str) -> UserProfile | None:
 
 def _to_response(profile: UserProfile) -> ProfileResponse:
     return ProfileResponse(
+        name=profile.name,
+        age=profile.age,
+        learning_goal_other=profile.learning_goal_other,
         native_language=profile.native_language,
         gender=profile.gender,
         learning_goals=[row.goal for row in profile.learning_goals],
@@ -134,6 +215,9 @@ def update_profile(
         profile = UserProfile(user_id=user.id)
         db.add(profile)
 
+    profile.name = payload.name
+    profile.age = payload.age
+    profile.learning_goal_other = payload.learning_goal_other
     profile.native_language = payload.native_language.value if payload.native_language else None
     profile.gender = payload.gender
     profile.study_frequency = payload.study_frequency
