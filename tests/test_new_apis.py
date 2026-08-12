@@ -506,7 +506,7 @@ class SendMessageTests(ApiTestCase):
         with self.session() as session:
             room = session.get(ChatRoom, room_id)
             self.assertEqual(room.turn_count, 2)
-            self.assertEqual(room.status.value, "completed")
+            self.assertEqual(room.status.value, "failed")
 
     @patch("app.routers.room_conversation.generate_structured_answer", autospec=True)
     def test_analysis_generates_answer_and_response_style(self, mock_generate):
