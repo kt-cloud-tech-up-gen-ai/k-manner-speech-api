@@ -7,7 +7,7 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DEFAULT_DATABASE_URL = "DATABASE_URL=postgresql+psycopg://postgres.dlgjsarbbblmsscxrqrt:minjoon1920!@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres"
+DEFAULT_DATABASE_URL = ""
 
 
 def get_database_url() -> str:
