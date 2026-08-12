@@ -1,8 +1,9 @@
 from collections.abc import Mapping
 
+from app.core.config import PROMPTS_DIR
 from app.prompt_builder.composer import PromptComposer
 
-composer = PromptComposer("app/prompts")
+composer = PromptComposer(PROMPTS_DIR)
 
 # 프롬프트에 표시할 화자 이름. 여기 없는 role은 이력에서 제외한다.
 SPEAKER_LABELS = {"user": "사용자", "assistant": "상대"}
