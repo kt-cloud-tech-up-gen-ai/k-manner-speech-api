@@ -113,6 +113,7 @@ class ConversationPipelineService:
             persona=clean_persona,
             analysis=analysis,
             answer=answer,
+            goal_achieved=chat_result.goal_achieved,
             response_style=response_style,
             audio=audio,
             processing_time_ms=round((perf_counter() - started_at) * 1_000, 2),
