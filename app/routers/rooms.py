@@ -85,6 +85,10 @@ def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
         role=message.role,
         content=message.content,
         created_at=message.created_at,
+        audio_url=(
+            f"/rooms/{message.room_id}/messages/{message.id}/audio"
+            if message.audio_storage_path else None
+        ),
     )
 
 

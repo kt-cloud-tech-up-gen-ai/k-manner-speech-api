@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from google import genai
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -39,6 +39,7 @@ from app.services.feedback import (
 from app.services.gemini_answer_audio_generator import GeminiAnswerAudioGenerator
 from app.services.gemini_user_text_analyzer import GeminiUserTextAnalyzer
 from app.services.llm import generate_answer, generate_structured_answer
+from app.services.media_storage import SupabaseMediaStorage
 from app.services.room_conversation import RoomConversationService
 
 router = APIRouter(tags=["Room Conversation"])
@@ -109,6 +110,15 @@ def _process_room_turn(
     assistant_message = ChatMessage(
         room_id=room.id, role="assistant", content=result.conversation.answer
     )
+    db.add(assistant_message)
+    db.flush()
+    owner_id = actor.user_id or actor.guest_id or "unknown"
+    assistant_message.audio_storage_path = SupabaseMediaStorage().upload_chat_audio(
+        Path(result.conversation.audio.audio_path),
+        owner_id=owner_id,
+        room_id=room.id,
+        message_id=assistant_message.id,
+    )
     feedback = ChatFeedback(
         room_id=room.id,
         last_message_id=user_message.id,
@@ -117,7 +127,7 @@ def _process_room_turn(
         score=result.feedback.score,
         result_json=result.feedback.model_dump(mode="json"),
     )
-    db.add_all([assistant_message, feedback])
+    db.add(feedback)
     if actor.is_guest:
         room.turn_count += 1
         if room.turn_count >= GUEST_MAX_TURNS:
@@ -179,6 +189,23 @@ def list_messages(
     room = _get_room_or_404(db, room_id, actor)
     return ChatMessageListResponse(
         messages=[_to_message_response(message) for message in room.messages]
+    )
+
+
+@router.get("/rooms/{room_id}/messages/{message_id}/audio")
+def get_message_audio(
+    room_id: str,
+    message_id: str,
+    actor: Actor = Depends(get_actor),
+    db: Session = Depends(get_db),
+) -> Response:
+    room = _get_room_or_404(db, room_id, actor)
+    message = next((item for item in room.messages if item.id == message_id), None)
+    if message is None or not message.audio_storage_path:
+        raise HTTPException(status_code=404, detail="음성 파일을 찾을 수 없습니다.")
+    return Response(
+        content=SupabaseMediaStorage().download_chat_audio(message.audio_storage_path),
+        media_type="audio/wav",
     )
 
 
