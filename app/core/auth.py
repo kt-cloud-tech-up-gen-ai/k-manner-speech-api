@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.schemas.auth import AuthUser
@@ -151,6 +151,22 @@ def sign_in_with_password(email: str, password: str) -> dict:
         ) from exc
 
 
+def refresh_session(refresh_token: str) -> dict:
+    """Exchange a Supabase refresh token for a rotated session."""
+    try:
+        return _call_supabase(
+            "/token?grant_type=refresh_token",
+            method="POST",
+            headers={},
+            body={"refresh_token": refresh_token},
+        )
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="세션이 만료되었습니다. 다시 로그인해 주세요.",
+        ) from exc
+
+
 def _raise_duplicate_email() -> None:
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -233,18 +249,21 @@ def _fetch_user(token: str) -> AuthUser | None:
 
 
 def allow_guest(
+    request: Request,
     token: Annotated[str | None, Depends(oauth2_scheme)],
 ) -> AuthUser | None:
     """게스트 허용. 유효한 토큰이 있으면 사용자, 없거나 잘못됐으면 None을 반환한다.
 
     사용 예: `user: AuthUser | None = Depends(allow_guest)`
     """
+    token = request.cookies.get("access_token") or token
     if not token:
         return None
     return _fetch_user(token)
 
 
 def require_user(
+    request: Request,
     token: Annotated[str | None, Depends(oauth2_scheme)],
 ) -> AuthUser:
     """로그인 필수. 토큰이 없거나 유효하지 않으면 401.
@@ -252,6 +271,7 @@ def require_user(
     사용 예: `user: AuthUser = Depends(require_user)`
     또는 라우터 전체 보호: `APIRouter(dependencies=[Depends(require_user)])`
     """
+    token = request.cookies.get("access_token") or token
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

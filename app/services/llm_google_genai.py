@@ -1,4 +1,4 @@
-"""2026-08-11에 보존한 Google GenAI 직접 채팅 provider.
+"""2026-08-11에 보존한 Google GenAI 직접 채팅 provider. 임시 파일임 안쓰는 파일
 
 활성 provider는 ``app.services.llm``이다. 향후 LangChain에서 되돌릴 때
 이 모듈의 provider 함수를 ``llm.py``에 재적용한다.

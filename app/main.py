@@ -1,7 +1,11 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, catalog, chat, health, rooms, voice, web_speech
-from app.routers.user_input import router as user_input_router
+from app.core.config import get_cors_allow_origins
+from app.core.csrf import CsrfMiddleware
+from app.core.errors import install_error_handlers
+from app.routers import auth, catalog, chat, health, rooms, web_speech
+from app.routers.room_conversation import router as room_conversation_router
 
 # 기동 시 스키마를 만들지 않는다. 스키마의 유일한 출처는 Alembic이다(`alembic upgrade head`).
 #
@@ -15,11 +19,24 @@ from app.routers.user_input import router as user_input_router
 #   기동 훅에서 SDK를 초기화하고 5xx 알람을 1개 이상 설정할 것.
 
 app = FastAPI(title="K-MANNER SPEECH", version="0.0.1")
+install_error_handlers(app)
+app.add_middleware(CsrfMiddleware)
+
+# 프론트(:5173)와 API(:8000)는 출처가 다르다. preflight(OPTIONS)에 허용 헤더를 내려주지 않으면
+# 브라우저가 실제 요청 자체를 보내지 않는다. DELETE /rooms/{id}와 Authorization 헤더를 쓰므로
+# 메서드/헤더를 모두 허용한다. allow_credentials=True 이므로 출처는 와일드카드가 아닌 명시 목록이어야 한다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_cors_allow_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(catalog.router)
 app.include_router(rooms.router)
-app.include_router(voice.router)
 app.include_router(web_speech.router)
-app.include_router(user_input_router, prefix="/api/v1")
+app.include_router(room_conversation_router)

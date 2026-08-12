@@ -22,7 +22,10 @@ EXPECTED_PERSONA_COLUMNS = {
     "gender": ("VARCHAR(32)", False),
     "description": ("TEXT", False),
     "relationship_description": ("TEXT", False),
-    "voice_id": ("VARCHAR(64)", True),
+    "headline": ("VARCHAR(120)", True),
+    "avatar_url": ("TEXT", True),
+    "sort_order": ("INTEGER", False),
+    "is_active": ("BOOLEAN", False),
     "version": ("DATETIME", False),
 }
 
@@ -35,6 +38,13 @@ EXPECTED_SCENARIO_COLUMNS = {
     "end_condition": ("TEXT", False),
     "max_turns": ("INTEGER", False),
     "turn_limit_exit_line": ("TEXT", True),
+    "title_ko": ("VARCHAR(160)", False),
+    "title_en": ("VARCHAR(160)", True),
+    "difficulty": ("VARCHAR(16)", True),
+    "estimated_minutes": ("SMALLINT", True),
+    "is_featured": ("BOOLEAN", False),
+    "sort_order": ("INTEGER", False),
+    "is_active": ("BOOLEAN", False),
     "version": ("DATETIME", False),
 }
 
@@ -100,7 +110,6 @@ class PersistenceTests(unittest.TestCase):
                     gender=Gender.MALE,
                     description="다정한 말투의 대화 상대",
                     relationship_description="같은 학교 선배",
-                    voice_id="v-1",
                 )
             )
             session.commit()
@@ -110,20 +119,17 @@ class PersistenceTests(unittest.TestCase):
             self.assertEqual(saved.age, 27)
             self.assertEqual(saved.gender, Gender.MALE)
             self.assertEqual(saved.relationship_description, "같은 학교 선배")
-            self.assertEqual(saved.voice_id, "v-1")
 
     def test_persona_optional_fields_default_to_null(self):
-        """선택값은 middle_name·last_name·voice_id 셋뿐이다."""
+        """선택값인 middle_name·last_name은 NULL로 저장할 수 있다."""
         with self.Session() as session:
             session.add(
-                make_persona(
-                    "minimal", middle_name=None, last_name=None, voice_id=None
-                )
+                make_persona("minimal", middle_name=None, last_name=None)
             )
             session.commit()
 
             saved = session.get(Persona, "minimal")
-            for field in ("middle_name", "last_name", "voice_id"):
+            for field in ("middle_name", "last_name"):
                 with self.subTest(field=field):
                     self.assertIsNone(getattr(saved, field))
 
