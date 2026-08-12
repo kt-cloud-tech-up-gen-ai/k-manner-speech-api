@@ -47,17 +47,40 @@ HISTORY_LIMIT = 50
 
 
 def _advance_room_turn(
-    room: ChatRoom, actor: Actor, scenario: Scenario | None
-) -> None:
-    """왕복 대화 1회를 기록하고 소유자 종류에 맞는 상한을 적용한다.
+    room: ChatRoom, actor: Actor, scenario: Scenario | None, *, goal_achieved: bool
+) -> bool:
+    """왕복 대화 1회를 기록하고 종료 상태를 확정한다.
 
-    게스트는 제품 체험 정책인 3턴까지만 허용한다. 로그인 사용자는 시나리오가 정한
-    max_turns를 사용하며, 자유 대화에는 이 라우터 수준의 상한을 두지 않는다.
+    게스트는 제품 체험 정책상 3턴까지만 허용하며, 상한 도달 시 completed로 마무리한다.
+    로그인 사용자는 시나리오의 종료 조건(communication_goal) 충족 여부로 판정한다.
+    조건을 충족하면 completed, 충족하지 못한 채 max_turns에 도달하면 failed다.
+
+    반환값은 이번 턴이 "턴 상한으로 실패 종료된 턴"인지 여부다. True면 호출자가
+    마지막 응답을 scenario.turn_limit_exit_line으로 대체한다.
     """
     room.turn_count += 1
-    limit = GUEST_MAX_TURNS if actor.is_guest else scenario.max_turns if scenario else None
-    if limit is not None and room.turn_count >= limit:
+
+    # 게스트 체험: 시나리오 종료 조건 개념이 없으므로 상한 도달만으로 completed.
+    if actor.is_guest:
+        if room.turn_count >= GUEST_MAX_TURNS:
+            room.status = ChatRoomStatus.COMPLETED
+        return False
+
+    # 시나리오가 없는 자유 대화는 라우터 수준의 상한을 두지 않는다.
+    if scenario is None:
+        return False
+
+    # 종료 조건을 충족했다면 상한과 무관하게 목표 달성으로 종료한다.
+    if goal_achieved:
         room.status = ChatRoomStatus.COMPLETED
+        return False
+
+    # 상한에 도달했는데 종료 조건을 충족하지 못했다면 실패로 종료한다.
+    if room.turn_count >= scenario.max_turns:
+        room.status = ChatRoomStatus.FAILED
+        return True
+
+    return False
 
 
 def _scenario_prompt_context(scenario: Scenario | None) -> dict[str, object] | None:
@@ -150,7 +173,11 @@ def _process_room_turn(
         result_json=result.feedback.model_dump(mode="json"),
     )
     db.add_all([assistant_message, feedback])
-    _advance_room_turn(room, actor, scenario)
+    turn_limit_reached = _advance_room_turn(
+        room, actor, scenario, goal_achieved=result.conversation.goal_achieved
+    )
+    if turn_limit_reached and scenario and scenario.turn_limit_exit_line:
+        assistant_message.content = scenario.turn_limit_exit_line
     db.commit()
     db.refresh(assistant_message)
     return RoomTurnResponse(
@@ -239,6 +266,7 @@ def send_message(
     scenario = catalog.find_scenario(db, room.scenario_id) if room.scenario_id else None
     scenario_context = _scenario_prompt_context(scenario)
     response_style = None
+    goal_achieved = False
     if request.analysis is not None:
         generation = generate_structured_answer(
             question,
@@ -249,6 +277,7 @@ def send_message(
         )
         answer = generation.answer
         response_style = generation.response_style
+        goal_achieved = generation.goal_achieved
     else:
         answer = generate_answer(
             question,
@@ -259,7 +288,7 @@ def send_message(
 
     assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
     db.add(assistant_message)
-    _advance_room_turn(room, actor, scenario)
+    _advance_room_turn(room, actor, scenario, goal_achieved=goal_achieved)
     db.commit()
     return SendMessageResponse(
         answer=answer,
