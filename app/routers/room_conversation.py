@@ -14,7 +14,7 @@ from app.core.config import FEEDBACK_MODEL, get_settings, get_tts_settings
 from app.core.db import get_db
 from app.core.guest import Actor, get_actor
 from app.models.catalog import Scenario
-from app.models.chat import ChatFeedback, ChatMessage, ChatRoomStatus
+from app.models.chat import ChatFeedback, ChatMessage, ChatRoom, ChatRoomStatus
 from app.routers.rooms import GUEST_MAX_TURNS, _get_room_or_404, _to_message_response
 from app.schemas.room_conversation import (
     RoomConversationContext,
@@ -44,6 +44,20 @@ from app.services.room_conversation import RoomConversationService
 
 router = APIRouter(tags=["Room Conversation"])
 HISTORY_LIMIT = 50
+
+
+def _advance_room_turn(
+    room: ChatRoom, actor: Actor, scenario: Scenario | None
+) -> None:
+    """왕복 대화 1회를 기록하고 소유자 종류에 맞는 상한을 적용한다.
+
+    게스트는 제품 체험 정책인 3턴까지만 허용한다. 로그인 사용자는 시나리오가 정한
+    max_turns를 사용하며, 자유 대화에는 이 라우터 수준의 상한을 두지 않는다.
+    """
+    room.turn_count += 1
+    limit = GUEST_MAX_TURNS if actor.is_guest else scenario.max_turns if scenario else None
+    if limit is not None and room.turn_count >= limit:
+        room.status = ChatRoomStatus.COMPLETED
 
 
 def _scenario_prompt_context(scenario: Scenario | None) -> dict[str, object] | None:
@@ -136,10 +150,7 @@ def _process_room_turn(
         result_json=result.feedback.model_dump(mode="json"),
     )
     db.add_all([assistant_message, feedback])
-    if actor.is_guest:
-        room.turn_count += 1
-        if room.turn_count >= GUEST_MAX_TURNS:
-            room.status = ChatRoomStatus.COMPLETED
+    _advance_room_turn(room, actor, scenario)
     db.commit()
     db.refresh(assistant_message)
     return RoomTurnResponse(
@@ -248,10 +259,7 @@ def send_message(
 
     assistant_message = ChatMessage(room_id=room.id, role="assistant", content=answer)
     db.add(assistant_message)
-    if actor.is_guest:
-        room.turn_count += 1
-        if room.turn_count >= GUEST_MAX_TURNS:
-            room.status = ChatRoomStatus.COMPLETED
+    _advance_room_turn(room, actor, scenario)
     db.commit()
     return SendMessageResponse(
         answer=answer,

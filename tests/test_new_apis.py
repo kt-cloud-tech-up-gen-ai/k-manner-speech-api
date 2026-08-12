@@ -15,6 +15,7 @@ from app.core.auth import AuthUser, allow_guest, require_user
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import Base, get_db
 from app.main import app as fastapi_app
+from app.models.catalog import Scenario
 from app.models.chat import ChatFeedback, ChatMessage, ChatRoom
 from app.models.user import LearningGoal, UserLearningGoal, UserProfile
 from app.services.feedback import (
@@ -159,7 +160,8 @@ class CatalogTests(ApiTestCase):
         self.assertNotIn("voice_id", persona)
 
         scenario = self.client.get("/scenarios").json()["scenarios"][0]
-        for field in ("communication_goal", "end_condition", "max_turns"):
+        self.assertIn("communication_goal", scenario)
+        for field in ("end_condition", "max_turns"):
             with self.subTest(field=field):
                 self.assertNotIn(field, scenario)
 
@@ -212,6 +214,11 @@ class CatalogTests(ApiTestCase):
 
 class RoomTests(ApiTestCase):
     def test_create_room_returns_created_room(self):
+        with self.session() as session:
+            scenario = session.get(Scenario, "interview")
+            scenario.opening_line = "안녕하세요. 면접을 시작하겠습니다."
+            session.commit()
+
         response = self._create_room(scenario_id="interview", name="면접 연습")
         self.assertEqual(response.status_code, 201)
         body = response.json()
@@ -219,6 +226,12 @@ class RoomTests(ApiTestCase):
         self.assertEqual(body["persona_id"], "doyun")
         self.assertEqual(body["scenario_id"], "interview")
         self.assertTrue(body["id"])
+
+        messages = self.client.get(f'/rooms/{body["id"]}/messages').json()["messages"]
+        self.assertEqual(
+            [(message["role"], message["content"]) for message in messages],
+            [("assistant", "안녕하세요. 면접을 시작하겠습니다.")],
+        )
 
     def test_create_room_requires_authentication(self):
         """토큰이 없으면 제한된 게스트 방을 만든다."""
@@ -475,6 +488,26 @@ class RoomTests(ApiTestCase):
 
 
 class SendMessageTests(ApiTestCase):
+    @patch("app.routers.room_conversation.generate_answer", return_value="계속해 볼까요?", autospec=True)
+    def test_signed_in_scenario_uses_scenario_turn_limit(self, _mock_answer):
+        with self.session() as session:
+            scenario = session.get(Scenario, "interview")
+            scenario.max_turns = 2
+            session.commit()
+
+        room_id = self._create_room(scenario_id="interview").json()["id"]
+        first = self.client.post(f"/rooms/{room_id}/messages", json={"question": "첫 번째"})
+        second = self.client.post(f"/rooms/{room_id}/messages", json={"question": "두 번째"})
+        third = self.client.post(f"/rooms/{room_id}/messages", json={"question": "세 번째"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(third.status_code, 409)
+        with self.session() as session:
+            room = session.get(ChatRoom, room_id)
+            self.assertEqual(room.turn_count, 2)
+            self.assertEqual(room.status.value, "completed")
+
     @patch("app.routers.room_conversation.generate_structured_answer", autospec=True)
     def test_analysis_generates_answer_and_response_style(self, mock_generate):
         from app.services.llm import ChatGeneration
@@ -850,6 +883,17 @@ class ProfileTests(ApiTestCase):
         self.assertEqual({key: body[key] for key in scalars}, scalars)
         self.assertIsNotNone(body["updated_at"])
         self.assertEqual(self.client.get("/auth/me").json()["profile"], body)
+
+    def test_existing_detailed_learning_goal_is_read_without_login_rollback(self):
+        self._authenticate()
+        detailed = {**self.FULL_PROFILE, "learning_goals": ["small_talk"]}
+
+        saved = self.client.put("/auth/me/profile", json=detailed)
+        loaded = self.client.get("/auth/me")
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()["profile"]["learning_goals"], ["small_talk"])
 
     def test_put_replaces_previous_values_entirely(self):
         self._authenticate()
