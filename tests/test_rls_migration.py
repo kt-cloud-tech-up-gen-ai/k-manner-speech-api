@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations" / "versions" / "a1c4e8f52b70_rls_data_api_policies.py"
+MIGRATION = ROOT / "migrations" / "versions" / "c7e1a4b92d60_harden_supabase_rls_policies.py"
 ALEMBIC_ENV = ROOT / "migrations" / "env.py"
 
 
@@ -60,7 +60,7 @@ class RlsMigrationTests(unittest.TestCase):
         self.assertIn("FROM anon, authenticated", sql)
 
     def test_revision_chain_and_downgrade_are_precise(self) -> None:
-        self.assertIn('down_revision = "f8b3c9d21a40"', self.source, "AC-LIVE-MIGRATION-CHAIN")
+        self.assertIn('down_revision = "b6d9f4e81a32"', self.source, "AC-LIVE-MIGRATION-CHAIN")
         self.assertIn("DROP POLICY IF EXISTS", self.source)
         self.assertNotIn("DROP TABLE", self.source.upper())
         self.assertNotIn("TRUNCATE", self.source.upper())

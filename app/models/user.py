@@ -11,7 +11,16 @@ PK는 Supabase user id(= AuthUser.id)이며 FK는 걸지 않는다(스키마/인
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -60,15 +69,22 @@ class UserProfile(Base):
     """
 
     __tablename__ = "user_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "age IS NULL OR (age >= 1 AND age <= 120)",
+            name="ck_user_profiles_age",
+        ),
+        CheckConstraint(
+            "app_language IN ('ko', 'en')",
+            name="ck_user_profiles_app_language",
+        ),
+    )
 
     # Supabase auth.users.id. chat_rooms.user_id와 같은 폭을 쓴다.
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     # 1. 모국어 — BCP 47 언어 태그(예: "ko", "en-US").
     native_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    learning_goal_other: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # 2. 성별
     gender: Mapped[Gender | None] = mapped_column(
@@ -86,6 +102,23 @@ class UserProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
     )
+    full_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    age: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    app_language: Mapped[str] = mapped_column(
+        String(5), default="ko", server_default="ko", nullable=False
+    )
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    time_zone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    learning_goal_other: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # 3. 주요 학습 목적(복수 선택)
     learning_goals: Mapped[list["UserLearningGoal"]] = relationship(
@@ -106,5 +139,45 @@ class UserLearningGoal(Base):
     goal: Mapped[LearningGoal] = mapped_column(
         _enum_column(LearningGoal, "ck_user_learning_goals_goal"), primary_key=True
     )
+    custom_goal: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     profile: Mapped[UserProfile] = relationship(back_populates="learning_goals")
+
+
+class UserTutorialProgress(Base):
+    """사용자별 튜토리얼 진행 상태."""
+
+    __tablename__ = "user_tutorial_progress"
+    __table_args__ = (
+        CheckConstraint(
+            "current_step >= 0", name="ck_user_tutorial_progress_step"
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("user_profiles.user_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tutorial_key: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default="first_home", server_default="first_home"
+    )
+    current_step: Mapped[int] = mapped_column(
+        SmallInteger, default=0, server_default="0", nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+        server_default=func.now(),
+        onupdate=_now,
+        nullable=False,
+    )

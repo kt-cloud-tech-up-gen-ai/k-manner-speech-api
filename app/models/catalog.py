@@ -10,7 +10,18 @@ id는 URL·요청 본문에 그대로 실리는 사람이 읽는 식별자(예: 
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Table,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, enum_column
@@ -76,8 +87,14 @@ class Persona(Base):
     # 사용자와 이 persona의 관계(예: "같은 학교 선배"). 호칭과 존대 수준을 정한다.
     relationship_description: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # ElevenLabs TTS 음성 id. 음성을 붙이지 않은 persona가 있어 nullable.
-    voice_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    headline: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
 
     # persona 정의가 바뀐 시각. 캐시 무효화·재현성 추적용이라 갱신 시 자동으로 올라간다.
     version: Mapped[datetime] = mapped_column(
@@ -122,6 +139,20 @@ class Scenario(Base):
     # 없으면 이 시나리오에 전용 마무리 대사가 없다는 뜻이다.
     turn_limit_exit_line: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    title_ko: Mapped[str] = mapped_column(String(160), nullable=False)
+    title_en: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    estimated_minutes: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    is_featured: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
     # 시나리오 정의가 바뀐 시각. Persona.version과 같은 규칙.
     version: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
@@ -133,3 +164,13 @@ class Scenario(Base):
         back_populates="scenarios",
         order_by=Persona.id,
     )
+
+
+Index("ix_personas_active_sort", Persona.is_active, Persona.sort_order, Persona.id)
+Index(
+    "ix_scenarios_active_featured_sort",
+    Scenario.is_active,
+    Scenario.is_featured,
+    Scenario.sort_order,
+    Scenario.id,
+)

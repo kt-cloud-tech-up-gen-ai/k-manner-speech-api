@@ -1,9 +1,9 @@
-"""Gemini로 텍스트의 감정·표현 방식·의도를 분석합니다."""
+"""Gemini로 사용자 텍스트의 감정·표현 방식·의도를 분석한다."""
 
 from google import genai
 from google.genai import types
 
-from app.schemas.user_input import TextModelAnalysis
+from app.schemas.user_input import TextModelAnalysis, UserInputAnalysis
 
 TEXT_ANALYSIS_PROMPT = """당신은 한국어 텍스트 입력 분석기입니다.
 텍스트의 의미, 어미, 감탄사, 문장부호를 바탕으로 감정과 의도를 추론하세요.
@@ -18,15 +18,21 @@ TEXT_ANALYSIS_PROMPT = """당신은 한국어 텍스트 입력 분석기입니�
 """
 
 
-class EmotionClassifierService:
+class GeminiUserTextAnalyzer:
+    """사용자 텍스트를 검증하고 Gemini 분석 결과를 공개 응답으로 변환한다."""
+
     def __init__(self, client: genai.Client, model: str) -> None:
         self.client = client
         self.model = model
 
-    def analyze_text(self, text: str) -> TextModelAnalysis:
+    def analyze_text(self, text: str) -> UserInputAnalysis:
+        clean_text = text.strip()
+        if not clean_text:
+            raise ValueError("텍스트를 입력하세요.")
+
         response = self.client.models.generate_content(
             model=self.model,
-            contents=TEXT_ANALYSIS_PROMPT.format(text=text.strip()),
+            contents=TEXT_ANALYSIS_PROMPT.format(text=clean_text),
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=TextModelAnalysis,
@@ -34,4 +40,12 @@ class EmotionClassifierService:
         )
         if response.parsed is None:
             raise RuntimeError("텍스트 입력 분석 응답을 해석하지 못했습니다.")
-        return TextModelAnalysis.model_validate(response.parsed)
+
+        analysis = TextModelAnalysis.model_validate(response.parsed)
+        return UserInputAnalysis(
+            user_text=clean_text,
+            user_emotion=analysis.emotion,
+            user_speaking_style=None,
+            inferred_style=analysis.inferred_style.strip(),
+            user_intent=analysis.intent.strip(),
+        )

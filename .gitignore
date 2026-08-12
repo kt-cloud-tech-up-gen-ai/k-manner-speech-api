@@ -108,3 +108,9 @@ venv.bak/
 # plan-acc 감사 문서에 이 저장소와 무관한 개인 프로젝트 이름이 들어 있어
 # 팀 저장소에 올리지 않는다. 공유가 필요하면 파일 단위로 `git add -f`.
 claudedocs/
+
+# TTS generated outputs
+app/outputs/*.mp3
+app/outputs/*.wav
+app/outputs/*.json
+!app/outputs/.gitkeep
