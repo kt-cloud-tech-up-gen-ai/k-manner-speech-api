@@ -223,9 +223,7 @@ class RoomTests(ApiTestCase):
 
     def test_create_room_requires_authentication(self):
         """토큰이 없으면 제한된 게스트 방을 만든다."""
-        response = self.client.post(
-            "/rooms", json={"persona_id": "doyun", "name": "테스트 방"}
-        )
+        response = self.client.post("/rooms", json={"persona_id": "doyun", "name": "테스트 방"})
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.json()["guest"])
 
@@ -437,9 +435,10 @@ class RoomTests(ApiTestCase):
         self._authenticate(_user("attacker"))
         calls = (
             ("조회", lambda: self.client.get(f"/rooms/{room_id}/messages")),
-            ("전송", lambda: self.client.post(
-                f"/rooms/{room_id}/messages", json={"question": "안녕"}
-            )),
+            (
+                "전송",
+                lambda: self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"}),
+            ),
             ("피드백", lambda: self.client.post(f"/rooms/{room_id}/feedback")),
         )
         for label, call in calls:
@@ -469,9 +468,7 @@ class RoomTests(ApiTestCase):
 
         for label, response in (
             ("조회", self.client.get(f"/rooms/{room_id}/messages")),
-            ("전송", self.client.post(
-                f"/rooms/{room_id}/messages", json={"question": "안녕"}
-            )),
+            ("전송", self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"})),
             ("피드백", self.client.post(f"/rooms/{room_id}/feedback")),
         ):
             with self.subTest(case=label):
@@ -479,13 +476,46 @@ class RoomTests(ApiTestCase):
 
 
 class SendMessageTests(ApiTestCase):
+    @patch("app.routers.rooms.generate_structured_answer", autospec=True)
+    def test_analysis_generates_answer_and_response_style(self, mock_generate):
+        from app.services.llm import ChatGeneration
+
+        mock_generate.return_value = ChatGeneration(
+            answer="안녕하세요! 만나서 반가워요.",
+            response_style="따뜻하고 정중한 말투",
+        )
+        room_id = self._create_room().json()["id"]
+
+        response = self.client.post(
+            f"/rooms/{room_id}/messages",
+            json={
+                "question": "안녕하세요",
+                "analysis": {
+                    "emotion": "보통",
+                    "inferred_style": "정중하고 격식 있는 문어체",
+                    "intent": "인사 및 대화 시작",
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["answer"], "안녕하세요! 만나서 반가워요.")
+        self.assertEqual(response.json()["response_style"], "따뜻하고 정중한 말투")
+        self.assertEqual(
+            mock_generate.call_args.kwargs["analysis"],
+            {
+                "emotion": "보통",
+                "inferred_style": "정중하고 격식 있는 문어체",
+                "intent": "인사 및 대화 시작",
+            },
+        )
+        self.assertEqual(mock_generate.call_count, 1)
+
     @patch("app.routers.rooms.generate_answer", return_value="안녕하세요!", autospec=True)
     def test_message_and_answer_are_persisted(self, mock_generate):
         room_id = self._create_room().json()["id"]
 
-        response = self.client.post(
-            f"/rooms/{room_id}/messages", json={"question": "안녕"}
-        )
+        response = self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["answer"], "안녕하세요!")
 
@@ -606,9 +636,7 @@ class FeedbackTests(ApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = json.loads(responses.kwargs["input"])
-        self.assertEqual(
-            payload["communication_goal"], "면접관의 질문에 존댓말로 끝까지 답한다"
-        )
+        self.assertEqual(payload["communication_goal"], "면접관의 질문에 존댓말로 끝까지 답한다")
 
     @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요", autospec=True)
     @patch("app.services.feedback.get_openai_client")
@@ -656,6 +684,7 @@ class FeedbackTests(ApiTestCase):
         self.assertFalse(body["cached"])
         self.assertEqual(body["score"], 80)
         self.assertEqual(mock_feedback.call_count, 1)
+
 
 class FeedbackServiceTests(unittest.TestCase):
     def test_safety_identifier_does_not_expose_user_id(self):
@@ -751,9 +780,7 @@ class TtsTests(ApiTestCase):
         self.assertNotIn("invalid voice", response.text)
 
     def test_unknown_persona_is_rejected(self):
-        response = self.client.post(
-            "/tts", json={"text": "안녕", "persona_id": "nobody"}
-        )
+        response = self.client.post("/tts", json={"text": "안녕", "persona_id": "nobody"})
         self.assertEqual(response.status_code, 400)
 
 
@@ -814,8 +841,12 @@ class ProfileTests(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         # 목적은 저장 순서를 보장하지 않으므로 집합으로 비교한다.
-        self.assertEqual(sorted(body["learning_goals"]), sorted(self.FULL_PROFILE["learning_goals"]))
-        scalars = {key: value for key, value in self.FULL_PROFILE.items() if key != "learning_goals"}
+        self.assertEqual(
+            sorted(body["learning_goals"]), sorted(self.FULL_PROFILE["learning_goals"])
+        )
+        scalars = {
+            key: value for key, value in self.FULL_PROFILE.items() if key != "learning_goals"
+        }
         self.assertEqual({key: body[key] for key in scalars}, scalars)
         self.assertIsNotNone(body["updated_at"])
         self.assertEqual(self.client.get("/auth/me").json()["profile"], body)
@@ -1001,9 +1032,7 @@ class SignupTests(ApiTestCase):
             response = self._signup()
 
         self.assertEqual(response.status_code, 400, msg="AC-T3-WEAK-PW-400")
-        self.assertIn(
-            "비밀번호", response.json()["error"]["message"], msg="AC-T3-WEAK-PW-400"
-        )
+        self.assertIn("비밀번호", response.json()["error"]["message"], msg="AC-T3-WEAK-PW-400")
 
     def test_signup_blank_fields_return_422_without_supabase_call(self):
         for label, payload in (
@@ -1205,6 +1234,16 @@ class OpenApiContractTests(unittest.TestCase):
         withdraw = spec["paths"]["/auth/me"]["delete"]
         self.assertTrue(withdraw.get("summary"), msg="AC-T9-OPENAPI-CONTRACT")
         self.assertIn("401", withdraw["responses"], msg="AC-T9-OPENAPI-CONTRACT")
+
+
+class WebSpeechTests(ApiTestCase):
+    def test_web_speech_test_page_is_served(self):
+        response = self.client.get("/web-speech-test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("SpeechRecognition", response.text)
+        self.assertIn("ko-KR", response.text)
 
 
 if __name__ == "__main__":

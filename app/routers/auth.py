@@ -125,6 +125,8 @@ def signup(
     응답은 로그인(POST /auth/login)과 같은 형태다. 받은 access_token을 이후 요청의
     `Authorization: Bearer <token>` 헤더에 붙이면 바로 다른 API를 쓸 수 있다.
     프로필(온보딩)은 가입 후 `PUT /auth/me/profile`로 저장한다.
+
+    TODO: 이메일 인증. 현재 email 인증 안 함. 심화 프로젝트에서 진행.
     """
     session = sign_up_with_password(payload.email, payload.password)
     # Confirm email이 켜져 있으면 Supabase가 세션 없이 user만 돌려준다(A1). 즉시 로그인
@@ -228,9 +230,7 @@ def update_profile(
     profile.learning_goals.clear()
     # 신규 프로필이면 goal 행보다 부모 행이 먼저 존재해야 FK를 만족한다.
     db.flush()
-    profile.learning_goals.extend(
-        UserLearningGoal(user_id=user.id, goal=goal) for goal in goals
-    )
+    profile.learning_goals.extend(UserLearningGoal(user_id=user.id, goal=goal) for goal in goals)
 
     db.commit()
     db.refresh(profile)

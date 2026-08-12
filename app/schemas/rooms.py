@@ -5,6 +5,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints
 
+from app.schemas.emotion_group import Emotion
+
 # CategoryScores/FeedbackIssue는 여기로 옮기지 않는다. 이 둘은 FeedbackResult의 일부로
 # chat_feedbacks.result_json에 그대로 저장·역직렬화되는 **영속 계약**이라, 소유권이
 # app/services/feedback.py에 있다. HTTP 응답인 FeedbackResponse만 여기 두고 임베드한다.
@@ -16,9 +18,7 @@ from app.services.feedback import CategoryScores, FeedbackIssue
 # 분기(`if request.scenario_id:`)를 그냥 통과해 **자유 수다 방으로 조용히 강등**됐고(201),
 # "   "는 카탈로그 조회에 실패해 400이 됐다. 둘 다 "시나리오를 고르려다 값이 빈" 요청이므로
 # 같게 다뤄야 한다. 시나리오를 고르지 않겠다는 뜻은 **필드를 보내지 않거나 null**이다.
-CatalogId = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
-]
+CatalogId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
 class CreateRoomRequest(BaseModel):
@@ -62,12 +62,20 @@ class ChatMessageListResponse(BaseModel):
     messages: list[ChatMessageResponse]
 
 
+class ChatInputAnalysis(BaseModel):
+    emotion: Emotion
+    inferred_style: str = Field(min_length=1, max_length=500)
+    intent: str = Field(min_length=1, max_length=500)
+
+
 class SendMessageRequest(BaseModel):
     question: str = Field(min_length=1)
+    analysis: ChatInputAnalysis | None = None
 
 
 class SendMessageResponse(BaseModel):
     answer: str
+    response_style: str | None = None
     message: ChatMessageResponse
 
 

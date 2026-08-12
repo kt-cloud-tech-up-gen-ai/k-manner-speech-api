@@ -799,7 +799,7 @@ def resolve_git_dir(repo_root: Path) -> Optional[Path]:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--absolute-git-dir"],
-            cwd=str(repo_root), capture_output=True, text=True, timeout=10,
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             p = Path(result.stdout.strip())
@@ -828,6 +828,8 @@ def build_git_env(env: dict, repo_root: Path, copy_root: Path) -> None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=clone_env,
             timeout=DEFAULT_TIMEOUT,
         )
@@ -841,6 +843,8 @@ def build_git_env(env: dict, repo_root: Path, copy_root: Path) -> None:
         ["git", "-C", str(isolated_repo), "remote", "remove", "origin"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=clone_env,
         timeout=10,
     )
@@ -1090,7 +1094,15 @@ GO_TEST_NAME_RE = re.compile(r"^func\s+(Test\w+)\s*\(")
 
 def run_git(args: list, cwd: Path):
     try:
-        proc = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            ["git"] + args,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
         return proc.returncode, proc.stdout
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)
