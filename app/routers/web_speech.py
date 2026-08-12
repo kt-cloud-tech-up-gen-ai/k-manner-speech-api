@@ -5,11 +5,8 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-
 router = APIRouter(tags=["Web Speech Test"])
-WEB_SPEECH_PAGE = (
-    Path(__file__).resolve().parent.parent / "static" / "web_speech_test.html"
-)
+WEB_SPEECH_PAGE = Path(__file__).resolve().parent.parent / "static" / "web_speech_test.html"
 
 
 @router.get("/web-speech-test", include_in_schema=False)

@@ -3,7 +3,7 @@
 YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능을 갖춘 FastAPI 채팅 API입니다.
 정체성(identity)·성격(personality)·문체(style)·규칙(rule) 등을 YAML 파일로 분리해 두고,
 우선순위에 따라 하나의 시스템 프롬프트로 합성한 뒤 Google Gemini에 질의합니다.
-대화 종료 후 표현 평가는 OpenAI GPT-5.6 Luna의 Structured Outputs로 생성합니다.
+대화 종료 후 표현 평가는 OpenAI Responses API의 구조화 출력으로 생성합니다.
 
 - 버전: `0.0.1`
 - 프레임워크: FastAPI + LangChain Google GenAI(채팅) + Google GenAI SDK(감정 분석)
@@ -16,6 +16,7 @@ YAML 기반 프롬프트 조합 시스템과 한국어 표현 피드백 기능�
 
 - Python 3.10 이상 (`str | Path` 문법 사용). 3.14.3에서 전체 의존성 설치·테스트 검증 완료.
 - Google Gemini API 키 (선택 — 미설정 시 LLM 호출 없이 기본 문구를 반환)
+- Google Gemini API 키 (`/rooms/{room_id}/messages` 사용 시 필요)
 - OpenAI API 키 (`/rooms/{room_id}/feedback` 사용 시 필요)
 
 ## 설치
@@ -99,8 +100,8 @@ cp .env.example .env
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
 | `CHAT_MODEL` | 선택 | 채팅 답변 생성 모델. 기본값은 `gemini-3.1-flash-lite`. |
 | `EMOTION_MODEL` | 선택 | 텍스트 감정·말투·의도 분석 모델. 기본값은 `gemini-3.1-flash-lite`. |
-| `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 서버 환경에만 저장합니다. |
-| `FEEDBACK_MODEL` | 선택 | 표현 피드백 모델. 기본값은 `gpt-5.6-luna`. |
+| `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 표현 피드백에서만 사용하며 클라이언트·로그·커밋에 노출하지 않습니다. |
+| `FEEDBACK_MODEL` | 선택 | 표현 피드백 OpenAI 모델. 기본값은 `gpt-5.6-luna`이며 `OPENAI_API_KEY`를 사용합니다. |
 | `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |
 | `SUPABASE_ANON_KEY` | 인증 사용 시 | 공개용 클라이언트 키. 대시보드의 **Publishable key**(`sb_publishable_...`) 또는 Legacy API keys 탭의 anon 키(`eyJ...`). `SUPABASE_PUBLISHABLE_KEY`라는 이름으로 넣어도 됩니다. 이 자리에 `service_role`/Secret 키를 넣지 마세요. |
 | `SUPABASE_SERVICE_ROLE_KEY` | 회원 탈퇴 사용 시 | `service_role`(Secret) 키. `DELETE /auth/me`의 Supabase 계정 삭제에만 쓰입니다. 서버 환경변수로만 보관하고 클라이언트·로그·커밋에 노출 금지. 미설정 시 탈퇴 API만 503. |
@@ -145,6 +146,22 @@ alembic upgrade <현재리비전>:head --sql > migration.sql
 `DATABASE_URL`이 PostgreSQL을 가리킬 때만 동작합니다.
 
 ## 실행
+
+### 프런트엔드 로컬 연동
+
+1. 이 저장소에서 `alembic upgrade head` 후 API를 `http://localhost:8000`으로 실행합니다.
+2. 형제 `k-manner-speech-front/web` 저장소에서 `npm run api:generate`로 FastAPI OpenAPI 기반 타입을 갱신합니다.
+3. 프런트의 `VITE_API_URL=http://localhost:8000`을 설정하고 `npm run dev`를 실행합니다.
+
+인증은 Supabase 이메일/비밀번호 방식이며 access/refresh는 HttpOnly 쿠키, CSRF는
+double-submit 쿠키/헤더를 사용합니다. 서버는 localhost:5173의 credential CORS를 허용합니다.
+게스트는 서버가 서명한 익명 HttpOnly 쿠키로 방과 메시지를 소유하며, 사용자가 보낸 세 번째
+메시지에 AI가 응답한 뒤 방이 완료됩니다. 로그인하면 현재 브라우저의 게스트 기록을 삭제합니다.
+
+대화·피드백 보존 정책은 2년이지만 자동 삭제 작업은 이번 범위에 포함하지 않습니다. 회원
+탈퇴 시 이름·이메일 등 개인정보와 프로필·목표·방·메시지·피드백을 즉시 삭제합니다.
+staging/prod 배포와 외부 SLA/모니터링은 이번 범위에서 제외하며 로컬 JSON 구조화 로그를
+사용합니다. API 테스트는 `python -m unittest discover -s tests -v`로 실행합니다.
 
 ```bash
 uvicorn app.main:app --reload
@@ -834,7 +851,6 @@ app/
 │   ├── llm.py              # LangChain 경유 채팅 (프롬프트 조합 적용)
 │   ├── gemini.py           # Gemini REST 직접 호출 (/ask_gemini 전용)
 │   ├── feedback.py         # Luna Structured Outputs 표현 평가
-│   ├── openai_client.py    # OpenAI 클라이언트 생성
 │   ├── catalog.py          # persona/scenario YAML 조회
 │   └── tts.py              # ElevenLabs 음성 합성
 ├── prompt_builder/

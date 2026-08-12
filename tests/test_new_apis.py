@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.auth import AuthUser, require_user
+from app.core.auth import AuthUser, allow_guest, require_user
 from app.core.config import FEEDBACK_MODEL
 from app.core.db import Base, get_db
 from app.main import app as fastapi_app
@@ -55,7 +55,7 @@ def _feedback_result() -> FeedbackResult:
 
 
 class _CapturingResponses:
-    """OpenAI Responses API 대역. parse에 넘어온 kwargs를 그대로 붙잡아 둔다."""
+    """OpenAI Responses API 대역. parse에 넘어온 kwargs를 붙잡아 둔다."""
 
     def __init__(self):
         self.kwargs = None
@@ -105,12 +105,17 @@ def _make_client() -> tuple[TestClient, object]:
 
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
+        self._guest_env = patch.dict(
+            os.environ, {"GUEST_SESSION_SECRET": "test-secret-32-bytes-minimum-value"}
+        )
+        self._guest_env.start()
         self.client, self.engine = _make_client()
 
     def tearDown(self):
         fastapi_app.dependency_overrides.clear()
         self.client.close()
         Base.metadata.drop_all(bind=self.engine)
+        self._guest_env.stop()
 
     def _authenticate(self, user: AuthUser = TEST_USER) -> AuthUser:
         """인증 의존성을 고정 사용자로 대체한다(Supabase 실호출 방지).
@@ -118,6 +123,7 @@ class ApiTestCase(unittest.TestCase):
         기본값은 override하지 않으므로, 401 케이스는 이 메서드를 부르지 않으면 된다.
         """
         fastapi_app.dependency_overrides[require_user] = lambda: user
+        fastapi_app.dependency_overrides[allow_guest] = lambda: user
         return user
 
     def session(self):
@@ -216,11 +222,10 @@ class RoomTests(ApiTestCase):
         self.assertTrue(body["id"])
 
     def test_create_room_requires_authentication(self):
-        """토큰이 없으면 방을 만들 수 없다. (_authenticate를 부르지 않는다)"""
-        response = self.client.post(
-            "/rooms", json={"persona_id": "doyun", "name": "테스트 방"}
-        )
-        self.assertEqual(response.status_code, 401)
+        """토큰이 없으면 제한된 게스트 방을 만든다."""
+        response = self.client.post("/rooms", json={"persona_id": "doyun", "name": "테스트 방"})
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["guest"])
 
     def test_create_room_owner_comes_from_token_not_body(self):
         """본문의 user_id로 남의 방을 만들 수 없다.
@@ -259,7 +264,7 @@ class RoomTests(ApiTestCase):
 
         response = self._create_room(scenario_id="unpaired")
         self.assertEqual(response.status_code, 400)
-        detail = response.json()["detail"]
+        detail = response.json()["error"]["message"]
         # 어느 조합이 막혔는지 알 수 있어야 고칠 수 있다.
         self.assertIn("doyun", detail)
         self.assertIn("unpaired", detail)
@@ -294,7 +299,7 @@ class RoomTests(ApiTestCase):
 
         second = self._create_room(name="또 만들기")
         self.assertEqual(second.status_code, 409)
-        self.assertIn(first.json()["id"], second.json()["detail"])
+        self.assertIn(first.json()["id"], second.json()["error"]["message"])
 
     def test_free_talk_room_is_allowed_once_per_persona(self):
         """제한은 상대별이다. persona가 다르면 각각 하나씩 가질 수 있다."""
@@ -349,7 +354,9 @@ class RoomTests(ApiTestCase):
         self.assertEqual(rooms, [])
 
     def test_room_list_requires_authentication(self):
-        self.assertEqual(self.client.get("/rooms").status_code, 401)
+        response = self.client.get("/rooms")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rooms"], [])
 
     def test_messages_of_unknown_room_is_404(self):
         self._authenticate()
@@ -410,7 +417,8 @@ class RoomTests(ApiTestCase):
     def test_delete_room_requires_authentication(self):
         room_id = self._create_room().json()["id"]
         fastapi_app.dependency_overrides.pop(require_user, None)
-        self.assertEqual(self.client.delete(f"/rooms/{room_id}").status_code, 401)
+        fastapi_app.dependency_overrides.pop(allow_guest, None)
+        self.assertEqual(self.client.delete(f"/rooms/{room_id}").status_code, 404)
 
     def test_delete_unknown_room_is_404(self):
         self._authenticate()
@@ -427,9 +435,10 @@ class RoomTests(ApiTestCase):
         self._authenticate(_user("attacker"))
         calls = (
             ("조회", lambda: self.client.get(f"/rooms/{room_id}/messages")),
-            ("전송", lambda: self.client.post(
-                f"/rooms/{room_id}/messages", json={"question": "안녕"}
-            )),
+            (
+                "전송",
+                lambda: self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"}),
+            ),
             ("피드백", lambda: self.client.post(f"/rooms/{room_id}/feedback")),
         )
         for label, call in calls:
@@ -437,8 +446,8 @@ class RoomTests(ApiTestCase):
                 response = call()
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(
-                    response.json()["detail"],
-                    self.client.get("/rooms/none/messages").json()["detail"],
+                    response.json()["error"]["message"],
+                    self.client.get("/rooms/none/messages").json()["error"]["message"],
                 )
 
     def test_other_users_room_receives_no_message(self):
@@ -455,16 +464,15 @@ class RoomTests(ApiTestCase):
     def test_room_endpoints_require_authentication(self):
         room_id = self._create_room().json()["id"]
         fastapi_app.dependency_overrides.pop(require_user, None)
+        fastapi_app.dependency_overrides.pop(allow_guest, None)
 
         for label, response in (
             ("조회", self.client.get(f"/rooms/{room_id}/messages")),
-            ("전송", self.client.post(
-                f"/rooms/{room_id}/messages", json={"question": "안녕"}
-            )),
+            ("전송", self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"})),
             ("피드백", self.client.post(f"/rooms/{room_id}/feedback")),
         ):
             with self.subTest(case=label):
-                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.status_code, 404)
 
 
 class SendMessageTests(ApiTestCase):
@@ -507,9 +515,7 @@ class SendMessageTests(ApiTestCase):
     def test_message_and_answer_are_persisted(self, mock_generate):
         room_id = self._create_room().json()["id"]
 
-        response = self.client.post(
-            f"/rooms/{room_id}/messages", json={"question": "안녕"}
-        )
+        response = self.client.post(f"/rooms/{room_id}/messages", json={"question": "안녕"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["answer"], "안녕하세요!")
 
@@ -630,9 +636,7 @@ class FeedbackTests(ApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = json.loads(responses.kwargs["input"])
-        self.assertEqual(
-            payload["communication_goal"], "면접관의 질문에 존댓말로 끝까지 답한다"
-        )
+        self.assertEqual(payload["communication_goal"], "면접관의 질문에 존댓말로 끝까지 답한다")
 
     @patch("app.routers.rooms.generate_answer", return_value="네 안녕하세요", autospec=True)
     @patch("app.services.feedback.get_openai_client")
@@ -681,13 +685,13 @@ class FeedbackTests(ApiTestCase):
         self.assertEqual(body["score"], 80)
         self.assertEqual(mock_feedback.call_count, 1)
 
+
+class FeedbackServiceTests(unittest.TestCase):
     def test_safety_identifier_does_not_expose_user_id(self):
         identifier = make_safety_identifier("user@example.com")
         self.assertEqual(len(identifier), 64)
         self.assertNotIn("user@example.com", identifier)
 
-
-class FeedbackServiceTests(unittest.TestCase):
     @patch("app.services.feedback.get_openai_client")
     def test_luna_request_uses_structured_outputs(self, mock_get_client):
         class FakeResponses:
@@ -700,9 +704,7 @@ class FeedbackServiceTests(unittest.TestCase):
                 return type("FakeResponse", (), {"output_parsed": result})()
 
         fake_responses = FakeResponses()
-        mock_get_client.return_value = type(
-            "FakeClient", (), {"responses": fake_responses}
-        )()
+        mock_get_client.return_value = _fake_openai_client(fake_responses)
 
         result = generate_feedback(
             [FeedbackMessage(id="message-id", role="user", content="야 뭐해")],
@@ -722,15 +724,7 @@ class FeedbackServiceTests(unittest.TestCase):
 
     @patch("app.services.feedback.get_openai_client")
     def test_unknown_message_issue_is_ignored(self, mock_get_client):
-        class FakeResponses:
-            def parse(self, **_kwargs):
-                return type(
-                    "FakeResponse", (), {"output_parsed": _feedback_result()}
-                )()
-
-        mock_get_client.return_value = type(
-            "FakeClient", (), {"responses": FakeResponses()}
-        )()
+        mock_get_client.return_value = _fake_openai_client(_CapturingResponses())
 
         result = generate_feedback(
             [FeedbackMessage(id="different-id", role="user", content="안녕하세요")],
@@ -786,9 +780,7 @@ class TtsTests(ApiTestCase):
         self.assertNotIn("invalid voice", response.text)
 
     def test_unknown_persona_is_rejected(self):
-        response = self.client.post(
-            "/tts", json={"text": "안녕", "persona_id": "nobody"}
-        )
+        response = self.client.post("/tts", json={"text": "안녕", "persona_id": "nobody"})
         self.assertEqual(response.status_code, 400)
 
 
@@ -829,7 +821,16 @@ class ProfileTests(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["user"]["id"], user.id)
-        self.assertEqual(body["profile"], {**self.EMPTY_PROFILE, "updated_at": None})
+        self.assertEqual(
+            body["profile"],
+            {
+                **self.EMPTY_PROFILE,
+                "name": None,
+                "age": None,
+                "learning_goal_other": None,
+                "updated_at": None,
+            },
+        )
         self.assertEqual(self._count("user_profiles"), 0)
 
     def test_put_creates_profile_and_me_returns_it(self):
@@ -840,8 +841,12 @@ class ProfileTests(ApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         # 목적은 저장 순서를 보장하지 않으므로 집합으로 비교한다.
-        self.assertEqual(sorted(body["learning_goals"]), sorted(self.FULL_PROFILE["learning_goals"]))
-        scalars = {key: value for key, value in self.FULL_PROFILE.items() if key != "learning_goals"}
+        self.assertEqual(
+            sorted(body["learning_goals"]), sorted(self.FULL_PROFILE["learning_goals"])
+        )
+        scalars = {
+            key: value for key, value in self.FULL_PROFILE.items() if key != "learning_goals"
+        }
         self.assertEqual({key: body[key] for key in scalars}, scalars)
         self.assertIsNotNone(body["updated_at"])
         self.assertEqual(self.client.get("/auth/me").json()["profile"], body)
@@ -903,7 +908,7 @@ class ProfileTests(ApiTestCase):
             "/auth/me/profile", json={**self.FULL_PROFILE, "native_language": "fr"}
         )
         self.assertEqual(response.status_code, 422)
-        self.assertIn("native_language", response.text)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
 
     def test_unknown_learning_goal_is_422(self):
         self._authenticate()
@@ -995,9 +1000,10 @@ class SignupTests(ApiTestCase):
 
         self.assertEqual(response.status_code, 201, msg="AC-T1-SIGNUP-TOKEN")
         body = response.json()
-        self.assertEqual(body["access_token"], "tok-1", msg="AC-T1-SIGNUP-TOKEN")
-        self.assertEqual(body["refresh_token"], "ref-1", msg="AC-T1-SIGNUP-TOKEN")
+        self.assertNotIn("access_token", body, msg="AC-T1-SIGNUP-TOKEN")
+        self.assertNotIn("refresh_token", body, msg="AC-T1-SIGNUP-TOKEN")
         self.assertEqual(body["user"]["id"], "u-1", msg="AC-T1-SIGNUP-TOKEN")
+        self.assertIn("HttpOnly", response.headers["set-cookie"], msg="AC-T1-SIGNUP-TOKEN")
 
     def test_signup_duplicate_email_maps_to_409(self):
         error = _supabase_error(
@@ -1007,7 +1013,7 @@ class SignupTests(ApiTestCase):
             response = self._signup()
 
         self.assertEqual(response.status_code, 409, msg="AC-T2-DUP-409")
-        self.assertEqual(response.json()["detail"], "이미 가입된 이메일입니다.")
+        self.assertEqual(response.json()["error"]["message"], "이미 가입된 이메일입니다.")
 
     def test_signup_hidden_duplicate_maps_to_409(self):
         """Confirm email ON에서 Supabase는 중복 가입을 200 + identities=[]로 숨긴다."""
@@ -1026,7 +1032,7 @@ class SignupTests(ApiTestCase):
             response = self._signup()
 
         self.assertEqual(response.status_code, 400, msg="AC-T3-WEAK-PW-400")
-        self.assertIn("비밀번호", response.json()["detail"], msg="AC-T3-WEAK-PW-400")
+        self.assertIn("비밀번호", response.json()["error"]["message"], msg="AC-T3-WEAK-PW-400")
 
     def test_signup_blank_fields_return_422_without_supabase_call(self):
         for label, payload in (
@@ -1044,7 +1050,7 @@ class SignupTests(ApiTestCase):
             response = self._signup()
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "가입 요청이 거부되었습니다.")
+        self.assertEqual(response.json()["error"]["message"], "가입 요청이 거부되었습니다.")
 
     def test_signup_connection_failure_maps_to_502(self):
         with _fake_supabase(error=URLError("offline")):

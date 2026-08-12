@@ -5,13 +5,18 @@ DB URL과 메타데이터는 alembic.ini가 아니라 app.core.db에서 가져�
 """
 
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from app.core.db import Base, get_database_url
 from app.models import catalog, chat, user  # noqa: F401  테이블 등록 목적(autogenerate 인식)
 from migrations.autogenerate_filters import include_object
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
 
 config = context.config
 

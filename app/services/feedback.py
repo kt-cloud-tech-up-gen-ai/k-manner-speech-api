@@ -1,4 +1,4 @@
-"""GPT-5.6 Luna로 사용자 발화의 한국어 표현을 구조화해 평가한다."""
+"""OpenAI Responses API로 사용자 발화의 한국어 표현을 구조화해 평가한다."""
 
 import hashlib
 import json
@@ -12,6 +12,7 @@ from app.core.config import FEEDBACK_MODEL
 from app.services.openai_client import OpenAIConfigurationError, get_openai_client
 
 logger = logging.getLogger(__name__)
+
 
 # chat_feedbacks의 유니크 키(room_id, last_message_id, model, prompt_version)에서
 # "어떤 프롬프트 계약으로 만든 결과인가"를 담당한다. LLM에 넣는 내용(지시문·입력 payload)이
@@ -77,6 +78,10 @@ class FeedbackMessage(BaseModel):
     content: str
 
 
+def make_safety_identifier(user_id: str) -> str:
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+
+
 def build_feedback_input(
     messages: list[FeedbackMessage],
     *,
@@ -108,11 +113,6 @@ def build_feedback_input(
     return json.dumps(payload, ensure_ascii=False)
 
 
-def make_safety_identifier(user_id: str) -> str:
-    """OpenAI에 원래 사용자 ID 대신 안정적인 비식별 해시를 전달한다."""
-    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()
-
-
 def generate_feedback(
     messages: list[FeedbackMessage],
     *,
@@ -122,8 +122,7 @@ def generate_feedback(
     user_id: str,
 ) -> FeedbackResult:
     try:
-        client = get_openai_client()
-        response = client.responses.parse(
+        response = get_openai_client().responses.parse(
             model=FEEDBACK_MODEL,
             reasoning={"effort": "low"},
             instructions=FEEDBACK_INSTRUCTIONS,
@@ -155,13 +154,13 @@ def generate_feedback(
             detail="표현 피드백을 생성하지 못했습니다.",
         ) from exc
 
-    result = response.output_parsed
-    if result is None:
+    if response.output_parsed is None:
         logger.warning("OpenAI feedback response did not contain parsed output")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="표현 피드백 응답을 해석하지 못했습니다.",
         )
+    result = FeedbackResult.model_validate(response.output_parsed)
 
     # 화면의 총점과 세부 점수가 어긋나지 않도록 서버에서 최종 합계를 확정한다.
     result.score = result.category_scores.total

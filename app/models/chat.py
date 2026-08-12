@@ -4,6 +4,7 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -57,7 +58,8 @@ class ChatRoom(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     # Supabase auth.users.id. 스키마 소유가 달라 FK는 걸지 않는다(논리 참조).
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    guest_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # 카탈로그 행이 사라지면 이 방의 프롬프트를 재구성할 수 없으므로 RESTRICT.
     persona_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("personas.id", ondelete="RESTRICT"), nullable=False
@@ -107,6 +109,13 @@ class ChatRoom(Base):
 
 
 Index("ix_chat_rooms_user_id_created_at", ChatRoom.user_id, ChatRoom.created_at)
+Index("ix_chat_rooms_guest_id_created_at", ChatRoom.guest_id, ChatRoom.created_at)
+ChatRoom.__table__.append_constraint(
+    CheckConstraint(
+        "(user_id IS NOT NULL AND guest_id IS NULL) OR (user_id IS NULL AND guest_id IS NOT NULL)",
+        name="ck_chat_rooms_exactly_one_owner",
+    )
+)
 # 채팅방 목록의 "최근 연락순" 정렬 전용.
 #
 # 방향은 붙이지 않는다. `WHERE user_id = ?`가 등치 조건이라 남는 정렬 키는 last_message_at

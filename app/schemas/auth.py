@@ -31,13 +31,19 @@ class SignupRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Swagger Authorize 및 일반 클라이언트가 함께 쓰는 로그인 응답."""
+    """Legacy token response shape retained for internal Supabase parsing tests."""
 
     access_token: str
     token_type: str = "bearer"
     refresh_token: str | None = None
     expires_in: int | None = None
     user: AuthUser | None = None
+
+
+class AuthSessionResponse(BaseModel):
+    """Browser-visible auth response. Tokens live only in HttpOnly cookies."""
+
+    user: AuthUser
 
 
 class NativeLanguage(str, Enum):
@@ -54,6 +60,9 @@ class NativeLanguage(str, Enum):
 class ProfileResponse(BaseModel):
     """온보딩 설정. 프로필 행이 없으면 모든 값이 비어 있는 기본값으로 응답한다."""
 
+    name: str | None = None
+    age: int | None = None
+    learning_goal_other: str | None = None
     # 쓰기는 NativeLanguage(ko/en)로 제한하지만, 읽기는 str로 열어둔다.
     # 컬럼에 DB 제약이 없어 다른 값(예: "en-US")이 직접 들어갈 수 있고,
     # 그때 조회가 500으로 죽는 것보다 저장된 값을 그대로 돌려주는 편이 낫다.
@@ -74,6 +83,9 @@ class MeResponse(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     """전체 교체(PUT). 다섯 필드를 모두 명시해야 하며, 값으로 null은 허용한다."""
 
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    age: int | None = Field(default=None, ge=1, le=120)
+    learning_goal_other: str | None = Field(default=None, max_length=500)
     native_language: NativeLanguage | None = Field(...)
     gender: Gender | None = Field(...)
     learning_goals: list[LearningGoal] = Field(...)
