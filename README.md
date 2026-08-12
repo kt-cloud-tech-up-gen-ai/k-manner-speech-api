@@ -851,18 +851,21 @@ app/
 │   ├── llm.py              # LangChain 경유 채팅 (프롬프트 조합 적용)
 │   ├── gemini.py           # Gemini REST 직접 호출 (/ask_gemini 전용)
 │   ├── feedback.py         # Luna Structured Outputs 표현 평가
-│   ├── catalog.py          # persona/scenario YAML 조회
+│   ├── catalog.py          # persona/scenario DB 조회 (SSOT는 DB, YAML 아님 — 아래 참고)
 │   └── gemini_answer_audio_generator.py # 페르소나 답변 Gemini 음성 생성
 ├── prompt_builder/
-│   ├── composer.py         # PromptComposer
-│   └── general_chat.py     # 일반 채팅 프롬프트 조합
+│   ├── composer.py         # PromptComposer (개별 프롬프트 + bundles 로더)
+│   └── general_chat.py     # 일반 채팅 프롬프트 조합, 시나리오 컨텍스트 주입
 └── prompts/
     ├── identities/         # 정체성 (assistant, friend, professor)
     ├── personalities/      # 성격 (formal, friendly, humorous, tsundere)
     ├── styles/             # 문체 (concise, detailed, emoji, markdown)
     ├── rules/              # 규칙 (safety, no_hallucination, citation)
     ├── tasks/              # 작업 (explain, summarize, translate)
-    └── modes/              # 모드 (interview, roleplay)
+    ├── modes/              # 모드 (interview, roleplay) — 행동 방식일 뿐 시나리오 데이터 아님
+    ├── bundles/            # 여러 프롬프트를 묶어 조합 (base_chat, personas/<id>)
+    │   └── personas/       # persona별 프롬프트 묶음 (예: doyun.yaml)
+    └── scenarios/          # 문서용 미러(런타임 미사용) — 시나리오 SSOT는 DB, 아래 참고
 ```
 
 ### 의존 방향
@@ -956,17 +959,78 @@ prompt: |               # 필수 — 실제 프롬프트 본문
 각 `prompt` 본문을 빈 줄 두 개(`\n\n`)로 이어 붙입니다.
 최종적으로 `general_chat.build_chat_prompt()`가 맨 뒤에 `사용자 질문: {question}`을 덧붙입니다.
 
+### 묶음(bundle)으로 조합하기
+
+카테고리·이름을 매번 나열하는 대신, `bundles/<name>.yaml`에 묶어 두고
+`compose_bundle(name)` 한 번으로 불러올 수 있습니다. 묶음 파일은 `category`/`name` 쌍의
+목록일 뿐 자체 `prompt` 본문은 없습니다 — 실제 본문은 각 항목이 가리키는 개별 YAML에 있고,
+묶음은 그 항목들을 모아 `compose_by_priority()`로 합성합니다.
+
+```yaml
+# app/prompts/bundles/base_chat.yaml
+id: base_chat
+prompts:
+  - category: rules
+    name: safety
+  - category: rules
+    name: no_hallucination
+  - category: styles
+    name: concise
+```
+
+persona 전용 묶음은 `bundles/personas/<persona_id>.yaml`에 둡니다. 페르소나가 아직
+하나(`doyun`)뿐이라 폴더도 하나뿐이지만, 페르소나가 늘어나는 자리입니다.
+
+```yaml
+# app/prompts/bundles/personas/doyun.yaml
+id: doyun
+description: 도윤 / 캠퍼스 훈남 / 처음 만난 또래
+prompts:
+  - category: identities
+    name: friend
+  - category: personalities
+    name: friendly
+```
+
+`base_chat`에는 페르소나와 무관하게 항상 켜져 있어야 하는 안전 규칙·기본 문체만 둡니다.
+페르소나 고유의 정체성·성격은 `base_chat`이 아니라 그 페르소나의 묶음에 둡니다
+(`app/prompts/bundles/README.md` 참고).
+
 ### 현재 `/chat`에 사용되는 조합
 
-`app/prompts/chat/general_chat.py`에 하드코딩되어 있습니다.
+`app/prompt_builder/general_chat.py`의 `build_chat_prompt()`가 실행 시점에 조합합니다
+(코드에 하드코딩된 카테고리·이름 나열이 아니라 아래 두 묶음을 로드합니다).
 
-| 순서 | 카테고리 | 이름 | priority |
-| --- | --- | --- | --- |
-| 1 | rules | `safety` | 100 |
-| 2 | rules | `no_hallucination` | 95 |
-| 3 | identities | `friend` | 85 |
-| 4 | personalities | `friendly` | 65 |
-| 5 | styles | `concise` | 40 |
+| 순서 | 출처 | 카테고리 | 이름 | priority |
+| --- | --- | --- | --- | --- |
+| 1 | `bundles/base_chat` | rules | `safety` | 100 |
+| 2 | `bundles/base_chat` | rules | `no_hallucination` | 95 |
+| 3 | `bundles/personas/doyun` (persona 지정 시) | identities | `friend` | 85 |
+| 4 | `bundles/personas/doyun` (persona 지정 시) | personalities | `friendly` | 65 |
+| 5 | `bundles/base_chat` | styles | `concise` | 40 |
+
+이후 `build_chat_prompt()`가 시나리오 컨텍스트(있으면) → 대화 이력(있으면) →
+감정 분석(있으면) → `사용자 질문: {question}` 순으로 이어 붙입니다.
+시나리오가 프롬프트에 들어가는 방식은 바로 아래 절 참고.
+
+### 시나리오는 왜 YAML로 없나
+
+`identities`/`personalities`/`styles`/`rules`/`tasks`/`modes`와 달리 **시나리오는 YAML
+파일로 존재하지 않습니다.** `personas`/`scenarios` 테이블이 카탈로그의 SSOT이고
+(`app/models/catalog.py` 모듈 docstring), 시나리오 값(장소·목표·종료조건·턴 상한 등)은
+Alembic 시드로 DB에 들어간 뒤 요청마다 `general_chat._format_scenario()`가 DB row를
+읽어 그 자리에서 프롬프트 텍스트로 펼칩니다.
+
+과거에 프롬프트 YAML을 스캔해 카탈로그 목록을 만든 적이 있었는데, 같은 값이 파일과 DB
+두 곳에 있으면 어느 쪽이 맞는지 알 수 없어져서 DB 하나로 모았습니다
+(`app/services/catalog.py` 모듈 docstring). 그래서 시나리오에는 `bundles`처럼 YAML을
+새로 만들지 않습니다.
+
+다만 마이그레이션 파일만 보고 시나리오 값을 파악하기 번거로워서, `app/prompts/scenarios/`에
+**읽기 전용 문서 미러**를 둡니다. 이 폴더는 어떤 코드도 로드하지 않고,
+`tests/test_migrations.py::ScenarioPromptDocMirrorTests`가 head로 올린 실제 DB 값과
+매 테스트 실행마다 맞대어 봐서 어긋나면 실패합니다. 자세한 필드 대응표는
+`app/prompts/scenarios/README.md`에 있습니다.
 
 ### 사용 가능한 프롬프트 전체 목록
 
@@ -997,7 +1061,7 @@ prompt: |               # 필수 — 실제 프롬프트 본문
 `compose_by_name()`을 사용하면 카테고리별 이름 목록만으로 프롬프트를 합성할 수 있습니다.
 
 ```python
-from app.prompts.composer import PromptComposer
+from app.prompt_builder.composer import PromptComposer
 
 composer = PromptComposer("app/prompts")
 
@@ -1010,15 +1074,54 @@ prompt = composer.compose_by_name(
 )
 ```
 
-### 새 프롬프트 추가하기
+### 새 프롬프트 조각 추가하기
+
+`identities`/`personalities`/`styles`/`rules`/`tasks`/`modes` 중 하나에 재사용 가능한
+조각을 추가할 때입니다. (persona 전체나 시나리오를 추가할 때는 아래 두 절을 봅니다.)
 
 1. 해당 카테고리 디렉터리에 `<이름>.yaml`을 만듭니다.
    (`app/prompts/personalities/calm.yaml` 등)
 2. `id`, `version`, `priority`, `prompt` 필드를 작성합니다.
 3. 기존 `priority` 값과 겹치지 않도록 배치 위치를 정합니다.
-4. `general_chat.py`의 조합 목록 또는 `compose_by_name()` 호출에 추가합니다.
+4. 이 조각을 쓸 묶음(`bundles/*.yaml`)에 `category`/`name`을 추가하거나,
+   `compose_by_name()` 호출에 직접 추가합니다.
 
 파일 이름이 곧 조합 시 사용하는 키입니다 (`composer.load("personalities", "calm")`).
+
+### 새 페르소나 추가하기
+
+페르소나는 "프롬프트 조각(정체성·성격)"과 "카탈로그 값(이름·나이·관계 등)" 둘로 나뉘고,
+전자는 YAML, 후자는 DB입니다. 둘 다 있어야 API에 노출되고 대화가 됩니다.
+
+1. 필요하면 `identities/`·`personalities/`에 새 조각을 먼저 추가합니다(이미 있는 조각을
+   재사용해도 됩니다).
+2. `app/prompts/bundles/personas/<persona_id>.yaml`을 만들어 그 조각들을 묶습니다
+   (`doyun.yaml`이 예시).
+3. 새 Alembic 마이그레이션으로 `personas` 테이블에 시드를 넣습니다
+   (`id`, `first_name`, `age`, `gender`, `description`, `relationship_description` 필수 —
+   `app/models/catalog.py`의 `Persona` 참고). id는 2번 YAML 파일명과 같게 맞춥니다.
+4. 이 페르소나로 연습할 수 있는 시나리오를 같은 마이그레이션에서 `persona_scenarios`에
+   매핑합니다. 매핑이 없으면 카탈로그에 나와도 그 조합으로 방을 만들 수 없습니다.
+5. `tests/catalog_fixtures.py`의 id 상수·시드값이 마이그레이션과 어긋나지 않는지
+   확인합니다(어긋나면 API 테스트가 먼저 깨집니다).
+
+### 새 시나리오 추가하기
+
+시나리오는 YAML 조각이 아니라 **DB가 SSOT**입니다([시나리오는 왜 YAML로 없나](#시나리오는-왜-yaml로-없나)
+참고).
+
+1. 새 Alembic 마이그레이션으로 `scenarios`에 시드를 넣습니다. 필수: `description`,
+   `communication_goal`, `end_condition`, `max_turns`, `title_ko`. 선택이지만 챙길 값:
+   `time_context`, `place_context`, `opening_line`(입장 시 첫 발화),
+   `turn_limit_exit_line`(턴 상한 도달 시 마무리 대사 — 없으면 그 시나리오는 `failed`로
+   끝날 때 할 말이 없어집니다. `d5b8c07f9a13` 마이그레이션의 설명을 참고합니다).
+2. 같은 마이그레이션에서 `persona_scenarios`에 매핑을 추가해, 이 시나리오를 고를 수 있는
+   페르소나를 최소 하나 이상 연결합니다.
+3. `app/prompts/scenarios/<scenario_id>.yaml`에 문서 미러를 추가합니다
+   (`app/prompts/scenarios/README.md`의 필드 대응표대로).
+4. `tests/test_migrations.py::ScenarioPromptDocMirrorTests`를 돌려 3번이 실제 시드와
+   맞는지 확인합니다. 어긋나면 실패합니다.
+5. `tests/catalog_fixtures.py`에 이 시나리오로 테스트를 짤 계획이면 그쪽 시드도 맞춥니다.
 
 ---
 
@@ -1028,9 +1131,12 @@ prompt = composer.compose_by_name(
 - **`.env` 로딩 경로**: `app/core/config.py`의 `ROOT` 계산이 `data/` 디렉터리를 찾지 못하면
   저장소 **상위** 디렉터리로 폴백합니다. 실제로는 뒤이어 호출되는 인자 없는 `load_dotenv()`가
   현재 작업 디렉터리 기준으로 `.env`를 찾아 로드하므로, 저장소 루트에서 실행하면 문제가 없습니다.
-- **프롬프트 조합 고정**: `/chat`은 페르소나·문체를 요청으로 선택할 수 없고
-  `general_chat.py`에 정의된 조합만 사용합니다.
-- **대화 이력 없음**: 멀티턴 컨텍스트를 유지하지 않습니다 (`app/core/state.py`는 비어 있음).
+- **문체 조합 고정**: `/chat`은 `persona`는 요청으로 고를 수 있지만(`request.persona`가
+  `bundles/personas/<id>.yaml`을 선택), 문체·규칙 묶음(`bundles/base_chat.yaml`)은
+  요청으로 바꿀 수 없고 항상 고정입니다.
+- **`/chat`은 대화 이력 없음**: `/chat`은 멀티턴 컨텍스트를 유지하지 않습니다
+  (`app/core/state.py`는 비어 있음). 이력이 필요한 대화는 `/rooms/*`를 씁니다
+  (아래 [채팅방](#채팅방-rooms) API 참고).
 - **`explain.yaml`의 `id` 불일치**: 파일명은 `explain`이지만 `id` 필드는 `behavior`입니다.
   로더는 파일명을 사용하므로 동작에는 영향이 없습니다.
 
