@@ -79,7 +79,7 @@ def _to_room_response(room: ChatRoom) -> RoomResponse:
     )
 
 
-def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
+def _to_message_response(message: ChatMessage, *, feedback: dict | None = None) -> ChatMessageResponse:
     return ChatMessageResponse(
         id=message.id,
         role=message.role,
@@ -89,6 +89,7 @@ def _to_message_response(message: ChatMessage) -> ChatMessageResponse:
             f"/rooms/{message.room_id}/messages/{message.id}/audio"
             if message.audio_storage_path else None
         ),
+        feedback=feedback,
     )
 
 

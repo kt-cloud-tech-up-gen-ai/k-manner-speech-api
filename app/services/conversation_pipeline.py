@@ -54,18 +54,21 @@ class ConversationPipelineService:
         history: list[dict[str, str]] | None = None,
         scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
-        voice_emotion = self.voice_analyzer.analyze(
-            audio_bytes=request.audio_bytes(),
-            mime_type=request.audio_mime_type,
-            transcript=request.transcript,
-        )
+        audio_bytes = request.audio_bytes()
+        voice_emotion = None
+        if audio_bytes is not None and request.audio_mime_type is not None:
+            voice_emotion = self.voice_analyzer.analyze(
+                audio_bytes=audio_bytes,
+                mime_type=request.audio_mime_type,
+                transcript=request.transcript,
+            )
         return self._process(
             "voice",
             request.transcript,
             request.persona,
             history=history,
-            voice_emotion=voice_emotion,
             scenario=scenario,
+            voice_emotion=voice_emotion,
         )
 
     def process_text(
@@ -80,8 +83,8 @@ class ConversationPipelineService:
             request.text,
             request.persona,
             history=history,
-            voice_emotion=None,
             scenario=scenario,
+            voice_emotion=None,
         )
 
     def replace_answer(self, response: ConversationResponse, answer: str) -> ConversationResponse:
@@ -104,8 +107,8 @@ class ConversationPipelineService:
         persona: str,
         *,
         history: list[dict[str, str]] | None,
-        voice_emotion: VoiceEmotionAnalysis | None,
         scenario: Mapping[str, object] | None,
+        voice_emotion: VoiceEmotionAnalysis | None,
     ) -> ConversationResponse:
         started_at = perf_counter()
         clean_text = text.strip()
@@ -125,9 +128,7 @@ class ConversationPipelineService:
             chat_analysis["voice_emotion"] = ", ".join(
                 f"{item.label} {item.percentage}%" for item in voice_emotion.emotions
             )
-            chat_analysis["listener_impressions"] = ", ".join(
-                voice_emotion.impressions
-            )
+            chat_analysis["listener_impressions"] = ", ".join(voice_emotion.impressions)
         chat_result = self.chat_generator(
             clean_text,
             persona=clean_persona,
