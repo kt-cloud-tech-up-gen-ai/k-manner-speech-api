@@ -6,3 +6,5 @@ prompts:
     name: friend
   - category: personalities
     name: friendly
+  - category: profiles
+    name: doyun_profile

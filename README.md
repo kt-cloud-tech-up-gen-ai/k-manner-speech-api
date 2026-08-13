@@ -95,7 +95,7 @@ cp .env.example .env
 
 | 변수 | 필수 | 설명 |
 | --- | --- | --- |
-| `DATABASE_URL` | 선택 | 접속할 DB. 미설정 시 `postgresql+psycopg://postgres:postgres@localhost:5432/k_manner_speech`. **마이그레이션이 적용되는 대상이기도 하므로 값을 확인하고 실행하세요.** |
+| `DATABASE_URL` | DB 기능 사용 시 필수 | 접속할 DB. 기본 접속 대상은 없습니다. 미설정 상태에서 서버 기동과 비DB API는 가능하지만 DB API는 503을 반환하고 Alembic은 설정 오류로 종료합니다. **마이그레이션 대상이므로 값을 확인하고 실행하세요.** |
 | `GOOGLE_API_KEY` | 선택 | Gemini API 키. 먼저 확인합니다. |
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
 | `CHAT_MODEL` | 선택 | 채팅 답변 생성 모델. 기본값은 `gemini-3.1-flash-lite`. |
@@ -126,6 +126,8 @@ alembic upgrade head     # 최신까지 적용
 - **저장소 루트에서 실행하세요.** `alembic.ini`가 루트에 있습니다.
 - 적용 대상은 `DATABASE_URL`이 가리키는 DB입니다. 원격 DB를 가리키고 있지 않은지 먼저
   확인하세요 (`alembic current`가 어디에 붙는지도 같은 값을 따릅니다).
+- `DATABASE_URL`이 없으면 Alembic은 암묵적인 로컬·공용 DB를 선택하지 않고 설정 오류로
+  종료합니다.
 - 되돌릴 때는 `alembic downgrade -1` (한 단계). 모든 리비전에 `downgrade()`가 있습니다.
 
 리비전 목록과 순서는 `alembic history`로 봅니다.
@@ -170,9 +172,9 @@ uvicorn app.main:app --reload
 - 기본 주소: `http://127.0.0.1:8000`
 - Swagger UI: `http://127.0.0.1:8000/docs`
 
-> **반드시 저장소 루트에서 실행하세요.** `app/prompt_builder/general_chat.py`가
-> `PromptComposer("app/prompts")`처럼 상대 경로를 사용하므로, 다른 디렉터리에서 실행하면
-> 프롬프트 YAML을 찾지 못해 `FileNotFoundError`가 발생합니다.
+프롬프트와 기본 TTS 출력 경로는 저장소 루트를 기준으로 해석하므로 다른 작업 디렉터리에서
+서버를 시작해도 동일합니다. 단, Alembic CLI는 `alembic.ini`를 찾을 수 있도록 저장소
+루트에서 실행하세요.
 
 ---
 

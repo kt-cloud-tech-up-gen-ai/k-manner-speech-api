@@ -9,6 +9,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -20,6 +21,20 @@ PERSONA_SCENARIOS = "b4d7e2a13c60"
 PROGRESS = "c3f1a9d5e274"
 CAMPUS_DIRECTIONS = "d5b8c07f9a13"
 FREE_CHAT_UNIQUE = "e7a2f4c81b09"
+
+
+class MigrationGraphTests(unittest.TestCase):
+    def test_pr18_merge_has_one_alembic_head(self):
+        config = Config(str(PROJECT_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+
+        heads = ScriptDirectory.from_config(config).get_heads()
+
+        self.assertEqual(
+            len(heads),
+            1,
+            f"AC-PR18-SINGLE-MIGRATION-HEAD: found {heads}",
+        )
 
 
 class MigrationTestCase(unittest.TestCase):

@@ -68,6 +68,19 @@ class ConversationPipelineService:
             scenario=scenario,
         )
 
+    def replace_answer(self, response: ConversationResponse, answer: str) -> ConversationResponse:
+        """최종 답변이 바뀌면 같은 문구로 TTS도 다시 생성한다."""
+        clean_answer = answer.strip()
+        if not clean_answer:
+            raise ValueError("대체할 답변을 입력하세요.")
+        audio = self.tts_service.generate(
+            EmotionTtsRequest(
+                text=clean_answer,
+                speaking_style=response.response_style,
+            )
+        )
+        return response.model_copy(update={"answer": clean_answer, "audio": audio})
+
     def _process(
         self,
         input_type: Literal["voice", "text"],

@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from google import genai
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -40,6 +40,7 @@ from app.services.feedback import (
 from app.services.gemini_answer_audio_generator import GeminiAnswerAudioGenerator
 from app.services.gemini_user_text_analyzer import GeminiUserTextAnalyzer
 from app.services.llm import generate_answer, generate_structured_answer
+from app.services.media_storage import SupabaseMediaStorage
 from app.services.room_conversation import RoomConversationService
 
 router = APIRouter(tags=["Room Conversation"])
@@ -140,9 +141,7 @@ def _process_room_turn(
         for message in room.messages[-(FEEDBACK_MESSAGE_LIMIT - 1) :]
         if message.role in {"user", "assistant"} and message.id != user_message.id
     ]
-    feedback_messages.append(
-        FeedbackMessage(id=user_message.id, role="user", content=clean_text)
-    )
+    feedback_messages.append(FeedbackMessage(id=user_message.id, role="user", content=clean_text))
     context = RoomConversationContext(
         room_id=room.id,
         user_id=actor.user_id or actor.guest_id or "unknown",
@@ -161,8 +160,23 @@ def _process_room_turn(
         else service.process_voice(request, context)
     )
 
+    turn_limit_reached = _advance_room_turn(
+        room, actor, scenario, goal_achieved=result.conversation.goal_achieved
+    )
+    if turn_limit_reached and scenario and scenario.turn_limit_exit_line:
+        result = service.replace_answer(result, scenario.turn_limit_exit_line)
+
     assistant_message = ChatMessage(
         room_id=room.id, role="assistant", content=result.conversation.answer
+    )
+    db.add(assistant_message)
+    db.flush()
+    owner_id = actor.user_id or actor.guest_id or "unknown"
+    assistant_message.audio_storage_path = SupabaseMediaStorage().upload_chat_audio(
+        Path(result.conversation.audio.audio_path),
+        owner_id=owner_id,
+        room_id=room.id,
+        message_id=assistant_message.id,
     )
     feedback = ChatFeedback(
         room_id=room.id,
@@ -172,12 +186,7 @@ def _process_room_turn(
         score=result.feedback.score,
         result_json=result.feedback.model_dump(mode="json"),
     )
-    db.add_all([assistant_message, feedback])
-    turn_limit_reached = _advance_room_turn(
-        room, actor, scenario, goal_achieved=result.conversation.goal_achieved
-    )
-    if turn_limit_reached and scenario and scenario.turn_limit_exit_line:
-        assistant_message.content = scenario.turn_limit_exit_line
+    db.add(feedback)
     db.commit()
     db.refresh(assistant_message)
     return RoomTurnResponse(
@@ -238,6 +247,23 @@ def list_messages(
     )
 
 
+@router.get("/rooms/{room_id}/messages/{message_id}/audio")
+def get_message_audio(
+    room_id: str,
+    message_id: str,
+    actor: Actor = Depends(get_actor),
+    db: Session = Depends(get_db),
+) -> Response:
+    room = _get_room_or_404(db, room_id, actor)
+    message = next((item for item in room.messages if item.id == message_id), None)
+    if message is None or not message.audio_storage_path:
+        raise HTTPException(status_code=404, detail="음성 파일을 찾을 수 없습니다.")
+    return Response(
+        content=SupabaseMediaStorage().download_chat_audio(message.audio_storage_path),
+        media_type="audio/wav",
+    )
+
+
 @router.post("/rooms/{room_id}/messages", response_model=SendMessageResponse)
 def send_message(
     room_id: str,
@@ -252,9 +278,7 @@ def send_message(
         raise HTTPException(status_code=409, detail="이미 종료된 채팅방입니다.")
     question = request.question.strip()
     if not question:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="질문을 입력해 주세요."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="질문을 입력해 주세요.")
     history = [
         {"role": message.role, "content": message.content}
         for message in room.messages[-HISTORY_LIMIT:]
@@ -307,7 +331,9 @@ def request_feedback(
 
     room = _get_room_or_404(db, room_id, actor)
     if actor.is_guest:
-        raise HTTPException(status_code=403, detail="게스트 대화에는 수동 피드백을 제공하지 않습니다.")
+        raise HTTPException(
+            status_code=403, detail="게스트 대화에는 수동 피드백을 제공하지 않습니다."
+        )
     if not any(message.role == "user" for message in room.messages):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

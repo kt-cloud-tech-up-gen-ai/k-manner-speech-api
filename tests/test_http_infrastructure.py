@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -75,3 +77,14 @@ def test_cors_rejects_unlisted_origin() -> None:
 
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_unexpected_error_handler_uses_configured_allowlist_directly() -> None:
+    origin = "https://dev.example.test"
+    with patch.dict(os.environ, {"CORS_ALLOW_ORIGINS": origin}):
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/_test/boom", headers={"Origin": origin})
+
+    assert response.headers.get("access-control-allow-origin") == origin, (
+        "AC-ERROR-CORS-CONFIG-SINGLE-SOURCE"
+    )

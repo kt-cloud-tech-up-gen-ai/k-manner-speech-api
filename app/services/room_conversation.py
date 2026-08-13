@@ -4,7 +4,11 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
-from app.schemas.conversation import TextConversationRequest, VoiceConversationRequest
+from app.schemas.conversation import (
+    ConversationResponse,
+    TextConversationRequest,
+    VoiceConversationRequest,
+)
 from app.schemas.room_conversation import (
     RoomConversationContext,
     RoomConversationResult,
@@ -17,6 +21,9 @@ from app.services.feedback import FeedbackResult
 class ConversationProcessor(Protocol):
     def process_text(self, request, *, history=None, scenario=None): ...
     def process_voice(self, request, *, history=None, scenario=None): ...
+    def replace_answer(
+        self, response: ConversationResponse, answer: str
+    ) -> ConversationResponse: ...
 
 
 FeedbackGenerator = Callable[..., FeedbackResult]
@@ -39,9 +46,7 @@ class RoomConversationService:
         conversation_request = TextConversationRequest(
             text=request.text, persona=context.persona_id
         )
-        return self._process(
-            self.conversation.process_text, conversation_request, context
-        )
+        return self._process(self.conversation.process_text, conversation_request, context)
 
     def process_voice(
         self, request: VoiceRoomTurnRequest, context: RoomConversationContext
@@ -49,9 +54,11 @@ class RoomConversationService:
         conversation_request = VoiceConversationRequest(
             transcript=request.transcript, persona=context.persona_id
         )
-        return self._process(
-            self.conversation.process_voice, conversation_request, context
-        )
+        return self._process(self.conversation.process_voice, conversation_request, context)
+
+    def replace_answer(self, result: RoomConversationResult, answer: str) -> RoomConversationResult:
+        conversation = self.conversation.replace_answer(result.conversation, answer)
+        return result.model_copy(update={"conversation": conversation})
 
     def _process(
         self, conversation_method, conversation_request, context: RoomConversationContext

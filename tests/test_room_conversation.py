@@ -94,6 +94,34 @@ class RoomConversationTests(unittest.TestCase):
             feedback.call_args.kwargs["communication_goal"], "자연스럽게 길 묻기"
         )
 
+    def test_replace_answer_preserves_feedback_and_regenerates_conversation(self):
+        from app.schemas.room_conversation import RoomConversationResult
+        from app.services.room_conversation import RoomConversationService
+
+        conversation = Mock()
+        original = self._conversation()
+        replacement = original.model_copy(
+            update={
+                "answer": "수업 시간이 다 돼서 가봐야 해.",
+                "audio": original.audio.model_copy(
+                    update={"text": "수업 시간이 다 돼서 가봐야 해."}
+                ),
+            }
+        )
+        conversation.replace_answer.return_value = replacement
+        service = RoomConversationService(conversation, Mock())
+        result = RoomConversationResult(
+            conversation=original,
+            feedback=self._feedback(),
+        )
+
+        replaced = service.replace_answer(result, replacement.answer)
+
+        conversation.replace_answer.assert_called_once_with(original, replacement.answer)
+        self.assertEqual(replaced.conversation.answer, replacement.answer)
+        self.assertEqual(replaced.conversation.audio.text, replacement.answer)
+        self.assertEqual(replaced.feedback, result.feedback)
+
     def test_openapi_uses_room_turn_routes_only(self):
         import app.main
 
