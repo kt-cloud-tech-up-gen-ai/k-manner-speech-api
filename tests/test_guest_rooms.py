@@ -29,6 +29,20 @@ class GuestRoomTests(ApiTestCase):
         hidden = self.client.get(f"/rooms/{room_id}/messages")
         self.assertEqual(hidden.status_code, 404, msg="AC-T4-GUEST-ISOLATION")
 
+    @patch("app.core.auth._fetch_user", return_value=None)
+    def test_invalid_login_cookie_is_not_silently_downgraded_to_guest(self, _fetch_user):
+        self.client.cookies.set("access_token", "expired-token")
+        self.client.cookies.set("csrf_token", "csrf-value")
+
+        response = self.client.post(
+            "/rooms",
+            json={"persona_id": "doyun", "scenario_id": "interview", "name": "expired"},
+            headers={"X-CSRF-Token": "csrf-value"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("세션", response.json()["error"]["message"])
+
 
 class GuestTurnTests(ApiTestCase):
     def setUp(self):

@@ -1,6 +1,6 @@
 """입력 분석, 페르소나 답변, Gemini TTS를 순서대로 실행한다."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from time import perf_counter
 from typing import Literal, Protocol
 
@@ -43,9 +43,14 @@ class ConversationPipelineService:
         request: VoiceConversationRequest,
         *,
         history: list[dict[str, str]] | None = None,
+        scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
         return self._process(
-            "voice", request.transcript, request.persona, history=history
+            "voice",
+            request.transcript,
+            request.persona,
+            history=history,
+            scenario=scenario,
         )
 
     def process_text(
@@ -53,8 +58,28 @@ class ConversationPipelineService:
         request: TextConversationRequest,
         *,
         history: list[dict[str, str]] | None = None,
+        scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
-        return self._process("text", request.text, request.persona, history=history)
+        return self._process(
+            "text",
+            request.text,
+            request.persona,
+            history=history,
+            scenario=scenario,
+        )
+
+    def replace_answer(self, response: ConversationResponse, answer: str) -> ConversationResponse:
+        """최종 답변이 바뀌면 같은 문구로 TTS도 다시 생성한다."""
+        clean_answer = answer.strip()
+        if not clean_answer:
+            raise ValueError("대체할 답변을 입력하세요.")
+        audio = self.tts_service.generate(
+            EmotionTtsRequest(
+                text=clean_answer,
+                speaking_style=response.response_style,
+            )
+        )
+        return response.model_copy(update={"answer": clean_answer, "audio": audio})
 
     def _process(
         self,
@@ -63,6 +88,7 @@ class ConversationPipelineService:
         persona: str,
         *,
         history: list[dict[str, str]] | None,
+        scenario: Mapping[str, object] | None,
     ) -> ConversationResponse:
         started_at = perf_counter()
         clean_text = text.strip()
@@ -82,6 +108,7 @@ class ConversationPipelineService:
                 "intent": analysis.user_intent,
             },
             history=history,
+            scenario=scenario,
         )
         answer = chat_result.answer.strip()
         response_style = (chat_result.response_style or "").strip()
@@ -99,6 +126,7 @@ class ConversationPipelineService:
             persona=clean_persona,
             analysis=analysis,
             answer=answer,
+            goal_achieved=chat_result.goal_achieved,
             response_style=response_style,
             audio=audio,
             processing_time_ms=round((perf_counter() - started_at) * 1_000, 2),

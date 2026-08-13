@@ -9,10 +9,9 @@ DB 컬럼(`app/models/catalog.py`)과 필드가 겹치지만 목적이 다르다
 - `...SummaryResponse`: **고르기 위한 정보**. 목록 화면이 카드를 그리는 데 필요한 값만.
 - `...Response`: **고른 뒤에 필요한 정보**. 요약을 포함하고 상세 값을 더한다.
 
-둘을 나눈 이유는 분량이 아니라 변경 속도다. `communication_goal`·`end_condition`·
-`max_turns`는 프롬프트 구성과 피드백 채점이 쓰는 값이라 프롬프트 규칙을 손볼 때마다
-바뀔 수 있다. 이것들이 목록 응답에 섞여 있으면 내부 규칙을 고칠 때마다 목록 화면의
-계약이 함께 흔들린다. 목록은 안정적으로 두고, 변동이 잦은 값은 단건 조회로 미룬다.
+둘을 나눈 이유는 분량이 아니라 사용 시점이다. 제목·난이도·예상 시간과
+`communication_goal`은 목록 카드가 직접 표시하므로 요약에도 포함한다.
+`end_condition`·`max_turns`는 대화를 시작한 뒤에만 필요하므로 단건 조회로 미룬다.
 
 `relationship_description`도 같은 이유로 단건에 둔다. 화면에 쓸 수는 있지만 본래 목적은
 프롬프트의 호칭·존대 수준 결정이다.
@@ -64,13 +63,25 @@ class ScenarioSummaryResponse(BaseModel):
     """시나리오 목록의 원소. 어떤 상황인지 알아보는 데 필요한 값만 담는다."""
 
     id: str = Field(description="채팅방 생성 시 scenario_id로 그대로 보내는 식별자")
+    title_ko: str = Field(description="목록 카드에 표시하는 한국어 제목")
+    title_en: str | None = Field(
+        default=None, description="목록 카드에 표시하는 영어 제목. 없으면 생략한다"
+    )
     description: str = Field(description="목록 화면에 보여 주는 한 줄 소개")
+    communication_goal: str = Field(description="목록 카드에 표시하는 대화 연습 목표")
     time_context: str | None = Field(
         default=None, description="시간 배경. 없으면 시간을 표시하지 않는다"
     )
     place_context: str | None = Field(
         default=None, description="공간 배경. 없으면 장소를 표시하지 않는다"
     )
+    difficulty: str | None = Field(
+        default=None, description="화면에 표시할 난이도. 없으면 easy로 표시한다"
+    )
+    estimated_minutes: int | None = Field(
+        default=None, description="예상 연습 시간(분). 없으면 턴 수로 추정한다"
+    )
+    is_featured: bool = Field(description="추천 시나리오 표시 여부")
 
 
 class PersonaResponse(PersonaSummaryResponse):
@@ -97,9 +108,6 @@ class PersonaListResponse(BaseModel):
 class ScenarioResponse(ScenarioSummaryResponse):
     """시나리오 단건. 대화 진행 규칙까지 포함한다."""
 
-    communication_goal: str = Field(
-        description="사용자가 달성해야 하는 의사소통 목표. 피드백 채점 기준이 된다"
-    )
     end_condition: str = Field(description="대화를 끝내도 되는 조건")
     max_turns: int = Field(
         description="턴 상한. 종료 조건이 걸리지 않아도 이 턴 수에서 마무리한다"

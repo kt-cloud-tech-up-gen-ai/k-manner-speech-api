@@ -51,6 +51,11 @@ class Actor:
 def get_actor(request: Request, response: Response, user: OptionalUser) -> Actor:
     if user is not None:
         return Actor(user=user)
+    # 만료되거나 잘못된 로그인 쿠키가 있는데도 새 게스트로 조용히 바꾸면, 사용자는
+    # 로그인 화면을 본 상태에서 3턴 체험 제한을 받게 된다. 세션 갱신/재로그인이
+    # 가능하도록 명시적인 401을 반환한다.
+    if request.cookies.get("access_token") or request.headers.get("Authorization"):
+        raise HTTPException(status_code=401, detail="로그인 세션이 만료되었습니다. 다시 로그인해 주세요.")
     guest_id = decode_guest_cookie(request.cookies.get(GUEST_COOKIE)) or secrets.token_urlsafe(24)
     response.set_cookie(
         GUEST_COOKIE, encode_guest_id(guest_id), httponly=True, samesite="lax", secure=False

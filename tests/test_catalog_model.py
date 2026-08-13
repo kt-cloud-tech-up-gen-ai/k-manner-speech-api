@@ -38,6 +38,7 @@ EXPECTED_SCENARIO_COLUMNS = {
     "end_condition": ("TEXT", False),
     "max_turns": ("INTEGER", False),
     "turn_limit_exit_line": ("TEXT", True),
+    "opening_line": ("TEXT", True),
     "title_ko": ("VARCHAR(160)", False),
     "title_en": ("VARCHAR(160)", True),
     "difficulty": ("VARCHAR(16)", True),
@@ -145,7 +146,12 @@ class PersistenceTests(unittest.TestCase):
 
     def test_scenario_required_fields_reject_null(self):
         """목표·종료조건·턴 상한이 없으면 시나리오가 성립하지 않는다."""
-        for field in ("description", "communication_goal", "end_condition", "max_turns"):
+        for field in (
+            "description",
+            "communication_goal",
+            "end_condition",
+            "max_turns",
+        ):
             with self.subTest(field=field):
                 with self.Session() as session:
                     session.add(make_scenario(f"broken-{field}", **{field: None}))
