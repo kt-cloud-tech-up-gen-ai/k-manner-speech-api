@@ -48,6 +48,12 @@ class LearningGoal(str, Enum):
     TRAVEL = "travel"
     EXAM = "exam"
     CULTURE = "culture"
+    WORK_INTERVIEW = "work_interview"
+    DATING_FIRST_IMPRESSION = "dating_first_impression"
+    SMALL_TALK = "small_talk"
+    REQUESTS_REFUSALS = "requests_refusals"
+    SERVICE_COMPLAINTS = "service_complaints"
+    HONORIFICS = "honorifics"
     OTHER = "other"
 
 

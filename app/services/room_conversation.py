@@ -15,8 +15,8 @@ from app.services.feedback import FeedbackResult
 
 
 class ConversationProcessor(Protocol):
-    def process_text(self, request, *, history=None): ...
-    def process_voice(self, request, *, history=None): ...
+    def process_text(self, request, *, history=None, scenario=None): ...
+    def process_voice(self, request, *, history=None, scenario=None): ...
 
 
 FeedbackGenerator = Callable[..., FeedbackResult]
@@ -58,7 +58,10 @@ class RoomConversationService:
     ) -> RoomConversationResult:
         with ThreadPoolExecutor(max_workers=2) as executor:
             conversation_future = executor.submit(
-                conversation_method, conversation_request, history=context.history
+                conversation_method,
+                conversation_request,
+                history=context.history,
+                scenario=context.scenario_context,
             )
             feedback_future = executor.submit(
                 self.feedback_generator,

@@ -137,6 +137,17 @@ def create_room(
     )
     db.add(room)
     try:
+        # room.id는 flush 시 생성된다. 시나리오에 시작 발화가 있으면 같은 트랜잭션에
+        # assistant 메시지로 저장해, 방을 연 프론트가 별도 생성 API 없이 바로 보여 준다.
+        db.flush()
+        if scenario is not None and scenario.opening_line:
+            opening_message = ChatMessage(
+                room_id=room.id,
+                role="assistant",
+                content=scenario.opening_line,
+            )
+            db.add(opening_message)
+            room.last_message_preview = scenario.opening_line[:100]
         db.commit()
     except IntegrityError:
         # 자유 수다 방 중복은 유니크 인덱스가 막는다. 미리 조회해 두는 사전 검사는 두지

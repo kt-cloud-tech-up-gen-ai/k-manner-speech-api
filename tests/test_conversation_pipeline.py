@@ -60,14 +60,20 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer, chat, tts = self._dependencies()
         service = ConversationPipelineService(analyzer, chat, tts)
 
+        scenario = {
+            "id": "ask-directions",
+            "communication_goal": "도윤 선배에게 길을 정중하게 묻는다",
+        }
         result = service.process_text(
-            TextConversationRequest(text="안녕", persona="doyun")
+            TextConversationRequest(text="안녕", persona="doyun"),
+            scenario=scenario,
         )
 
         self.assertEqual(result.input_type, "text")
         self.assertEqual(result.audio.voice_name, "Kore")
         analyzer.analyze_text.assert_called_once_with("안녕")
         chat.assert_called_once()
+        self.assertEqual(chat.call_args.kwargs["scenario"], scenario)
         tts.generate.assert_called_once()
 
     def test_missing_response_style_stops_before_tts(self):

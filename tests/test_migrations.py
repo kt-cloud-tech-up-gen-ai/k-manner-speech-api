@@ -687,5 +687,93 @@ class CampusDirectionsRevisionTests(MigrationTestCase):
         self.assertEqual(count, 1)
 
 
+class ScenarioPromptDocMirrorTests(MigrationTestCase):
+    """app/prompts/scenarios/*.yaml는 문서용 미러다(런타임 미사용, README 참고).
+
+    `app/services/catalog.py`의 docstring이 밝히듯 이 저장소는 한 번 "같은 값이 파일과
+    DB 두 곳에 있어 어느 쪽이 맞는지 알 수 없는" 문제를 겪고 DB로 통합했다. 문서용 미러를
+    다시 두면서 같은 문제를 재현하지 않으려면, head까지 올린 실제 DB 값과 이 테스트가
+    항상 맞대어 봐야 한다. 어긋나면 마이그레이션을 새로 쓸 때 미러 갱신을 잊었다는 뜻이다.
+    """
+
+    DOC_FIELDS = (
+        "description",
+        "time_context",
+        "place_context",
+        "communication_goal",
+        "end_condition",
+        "max_turns",
+        "turn_limit_exit_line",
+        "opening_line",
+        "title_ko",
+    )
+
+    def _doc_files(self):
+        import yaml
+
+        docs = {}
+        for path in sorted((PROJECT_ROOT / "app" / "prompts" / "scenarios").glob("*.yaml")):
+            with path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            docs[data["id"]] = data
+        return docs
+
+    def test_every_documented_scenario_still_exists(self):
+        docs = self._doc_files()
+        self.upgrade()
+
+        with self.engine.connect() as connection:
+            live_ids = set(connection.execute(text("SELECT id FROM scenarios")).scalars())
+
+        missing = set(docs) - live_ids
+        self.assertFalse(
+            missing,
+            f"문서에는 있는데 DB에 없는 시나리오: {missing}. "
+            "id를 바꿨거나 지웠다면 app/prompts/scenarios/*.yaml도 함께 정리한다.",
+        )
+
+    def test_documented_fields_match_the_database(self):
+        docs = self._doc_files()
+        self.upgrade()
+
+        with self.engine.connect() as connection:
+            for scenario_id, doc in docs.items():
+                row = connection.execute(
+                    text(
+                        f"SELECT {', '.join(self.DOC_FIELDS)}"  # noqa: S608 — 컬럼명은 상수뿐
+                        " FROM scenarios WHERE id = :id"
+                    ),
+                    {"id": scenario_id},
+                ).one()._asdict()
+                expected = {field: doc.get(field) for field in self.DOC_FIELDS}
+                self.assertEqual(
+                    row,
+                    expected,
+                    f"'{scenario_id}' 문서가 DB와 어긋난다 — 마이그레이션을 반영한 뒤"
+                    f" app/prompts/scenarios/{scenario_id}.yaml도 갱신한다.",
+                )
+
+    def test_documented_personas_match_the_database(self):
+        docs = self._doc_files()
+        self.upgrade()
+
+        with self.engine.connect() as connection:
+            for scenario_id, doc in docs.items():
+                live_personas = set(
+                    connection.execute(
+                        text(
+                            "SELECT persona_id FROM persona_scenarios"
+                            " WHERE scenario_id = :id"
+                        ),
+                        {"id": scenario_id},
+                    ).scalars()
+                )
+                self.assertEqual(
+                    live_personas,
+                    set(doc.get("personas") or []),
+                    f"'{scenario_id}'의 persona 매핑이 문서와 어긋난다.",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
