@@ -40,9 +40,7 @@ def get_settings() -> Settings:
     return Settings(
         gemini_api_key=api_key,
         emotion_model=os.getenv("EMOTION_MODEL", DEFAULT_EMOTION_MODEL),
-        voice_emotion_model=os.getenv(
-            "VOICE_EMOTION_MODEL", DEFAULT_VOICE_EMOTION_MODEL
-        ),
+        voice_emotion_model=os.getenv("VOICE_EMOTION_MODEL", DEFAULT_VOICE_EMOTION_MODEL),
     )
 
 

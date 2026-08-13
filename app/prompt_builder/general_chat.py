@@ -14,11 +14,15 @@ def build_chat_prompt(
     persona: str | None = None,
     history: list[dict[str, str]] | None = None,
     analysis: Mapping[str, str] | None = None,
+    scenario: Mapping[str, object] | None = None,
 ) -> str:
-    """시스템 프롬프트 + (선택) 대화 이력 + 이번 질문을 하나의 프롬프트로 합친다.
+    """시스템 프롬프트 + 선택 컨텍스트 + 이번 질문을 하나의 프롬프트로 합친다.
 
     history는 `{"role": "user"|"assistant", "content": ...}` 목록이며 오래된 순이다.
     잘라내기는 호출자 책임이다(routers/rooms.py의 HISTORY_LIMIT).
+
+    scenario는 DB 모델을 직접 받지 않고 프롬프트에 필요한 필드만 담은 매핑을 받는다.
+    이 경계를 두면 프롬프트 조합 계층이 SQLAlchemy에 의존하지 않는다.
     """
     prompts = [
         *composer.load_bundle("base_chat"),
@@ -27,6 +31,8 @@ def build_chat_prompt(
     base_prompt = composer.compose_by_priority(prompts)
 
     sections = [base_prompt]
+    if scenario:
+        sections.append(_format_scenario(scenario))
     transcript = _format_history(history)
     if transcript:
         sections.append(f"## 대화 이력\n{transcript}")
@@ -35,6 +41,39 @@ def build_chat_prompt(
     sections.append(f"사용자 질문: {question}")
 
     return "\n\n".join(sections)
+
+
+def _format_scenario(scenario: Mapping[str, object]) -> str:
+    """DB 카탈로그의 시나리오를 모델이 따를 수 있는 명시적인 규칙으로 펼친다."""
+    lines = [
+        "## 현재 대화 시나리오",
+        "아래 설정을 유지하며 상대 역할로 자연스럽게 대화한다.",
+        "시나리오의 관계·상황 설정이 페르소나의 일반 배경과 충돌하면 "
+        "시나리오를 페르소나의 일반 배경보다 우선한다.",
+        "시나리오 설정이나 종료 조건을 사용자에게 그대로 읽어 주거나 설명하지 않는다.",
+    ]
+
+    labelled_fields = (
+        ("id", "ID"),
+        ("description", "상황"),
+        ("time_context", "시간"),
+        ("place_context", "장소"),
+        ("communication_goal", "사용자 목표"),
+        ("end_condition", "종료 조건"),
+        ("max_turns", "최대 대화 턴"),
+        ("turn_limit_exit_line", "턴 상한 마무리"),
+    )
+    for key, label in labelled_fields:
+        value = scenario.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+        lines.append(f"- {label}: {value}")
+
+    return "\n".join(lines)
 
 
 def _format_history(history: list[dict[str, str]] | None) -> str:

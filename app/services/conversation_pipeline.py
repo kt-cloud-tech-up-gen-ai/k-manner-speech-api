@@ -1,6 +1,6 @@
 """입력 분석, 페르소나 답변, Gemini TTS를 순서대로 실행한다."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from time import perf_counter
 from typing import Literal, Protocol
 
@@ -52,17 +52,22 @@ class ConversationPipelineService:
         request: VoiceConversationRequest,
         *,
         history: list[dict[str, str]] | None = None,
+        scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
-        voice_emotion = self.voice_analyzer.analyze(
-            audio_bytes=request.audio_bytes(),
-            mime_type=request.audio_mime_type,
-            transcript=request.transcript,
-        )
+        audio_bytes = request.audio_bytes()
+        voice_emotion = None
+        if audio_bytes is not None and request.audio_mime_type is not None:
+            voice_emotion = self.voice_analyzer.analyze(
+                audio_bytes=audio_bytes,
+                mime_type=request.audio_mime_type,
+                transcript=request.transcript,
+            )
         return self._process(
             "voice",
             request.transcript,
             request.persona,
             history=history,
+            scenario=scenario,
             voice_emotion=voice_emotion,
         )
 
@@ -71,10 +76,29 @@ class ConversationPipelineService:
         request: TextConversationRequest,
         *,
         history: list[dict[str, str]] | None = None,
+        scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
         return self._process(
-            "text", request.text, request.persona, history=history, voice_emotion=None
+            "text",
+            request.text,
+            request.persona,
+            history=history,
+            scenario=scenario,
+            voice_emotion=None,
         )
+
+    def replace_answer(self, response: ConversationResponse, answer: str) -> ConversationResponse:
+        """최종 답변이 바뀌면 같은 문구로 TTS도 다시 생성한다."""
+        clean_answer = answer.strip()
+        if not clean_answer:
+            raise ValueError("대체할 답변을 입력하세요.")
+        audio = self.tts_service.generate(
+            EmotionTtsRequest(
+                text=clean_answer,
+                speaking_style=response.response_style,
+            )
+        )
+        return response.model_copy(update={"answer": clean_answer, "audio": audio})
 
     def _process(
         self,
@@ -83,6 +107,7 @@ class ConversationPipelineService:
         persona: str,
         *,
         history: list[dict[str, str]] | None,
+        scenario: Mapping[str, object] | None,
         voice_emotion: VoiceEmotionAnalysis | None,
     ) -> ConversationResponse:
         started_at = perf_counter()
@@ -103,14 +128,13 @@ class ConversationPipelineService:
             chat_analysis["voice_emotion"] = ", ".join(
                 f"{item.label} {item.percentage}%" for item in voice_emotion.emotions
             )
-            chat_analysis["listener_impressions"] = ", ".join(
-                voice_emotion.impressions
-            )
+            chat_analysis["listener_impressions"] = ", ".join(voice_emotion.impressions)
         chat_result = self.chat_generator(
             clean_text,
             persona=clean_persona,
             analysis=chat_analysis,
             history=history,
+            scenario=scenario,
         )
         answer = chat_result.answer.strip()
         response_style = (chat_result.response_style or "").strip()
@@ -129,6 +153,7 @@ class ConversationPipelineService:
             analysis=analysis,
             voice_emotion=voice_emotion,
             answer=answer,
+            goal_achieved=chat_result.goal_achieved,
             response_style=response_style,
             audio=audio,
             processing_time_ms=round((perf_counter() - started_at) * 1_000, 2),

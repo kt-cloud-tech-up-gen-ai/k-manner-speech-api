@@ -65,10 +65,13 @@ class RoomConversationTests(unittest.TestCase):
             persona_description="도윤 / 처음 만난 또래",
             scenario_description="캠퍼스 길 묻기",
             communication_goal="자연스럽게 길 묻기",
+            scenario_context={
+                "id": "ask-directions",
+                "description": "캠퍼스 길 묻기",
+                "communication_goal": "자연스럽게 길 묻기",
+            },
             history=[{"role": "assistant", "content": "무엇을 도와드릴까요?"}],
-            feedback_messages=[
-                FeedbackMessage(id="m1", role="user", content="안녕하세요")
-            ],
+            feedback_messages=[FeedbackMessage(id="m1", role="user", content="안녕하세요")],
         )
 
         result = service.process_text(TextRoomTurnRequest(text="안녕하세요"), context)
@@ -77,13 +80,41 @@ class RoomConversationTests(unittest.TestCase):
         self.assertEqual(result.feedback.score, 90)
         conversation_request = conversation.process_text.call_args.args[0]
         self.assertEqual(conversation_request.persona, "doyun")
+        self.assertEqual(conversation.process_text.call_args.kwargs["history"], context.history)
         self.assertEqual(
-            conversation.process_text.call_args.kwargs["history"], context.history
+            conversation.process_text.call_args.kwargs["scenario"],
+            context.scenario_context,
         )
         self.assertEqual(feedback.call_args.kwargs["user_id"], "user-1")
-        self.assertEqual(
-            feedback.call_args.kwargs["communication_goal"], "자연스럽게 길 묻기"
+        self.assertEqual(feedback.call_args.kwargs["communication_goal"], "자연스럽게 길 묻기")
+
+    def test_replace_answer_preserves_feedback_and_regenerates_conversation(self):
+        from app.schemas.room_conversation import RoomConversationResult
+        from app.services.room_conversation import RoomConversationService
+
+        conversation = Mock()
+        original = self._conversation()
+        replacement = original.model_copy(
+            update={
+                "answer": "수업 시간이 다 돼서 가봐야 해.",
+                "audio": original.audio.model_copy(
+                    update={"text": "수업 시간이 다 돼서 가봐야 해."}
+                ),
+            }
         )
+        conversation.replace_answer.return_value = replacement
+        service = RoomConversationService(conversation, Mock())
+        result = RoomConversationResult(
+            conversation=original,
+            feedback=self._feedback(),
+        )
+
+        replaced = service.replace_answer(result, replacement.answer)
+
+        conversation.replace_answer.assert_called_once_with(original, replacement.answer)
+        self.assertEqual(replaced.conversation.answer, replacement.answer)
+        self.assertEqual(replaced.conversation.audio.text, replacement.answer)
+        self.assertEqual(replaced.feedback, result.feedback)
 
     def test_openapi_uses_room_turn_routes_only(self):
         import app.main

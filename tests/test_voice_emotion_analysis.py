@@ -44,9 +44,7 @@ class GeminiVoiceEmotionAnalyzerTests(unittest.TestCase):
         service, client = self._service({})
 
         with self.assertRaisesRegex(ValueError, "음성 데이터"):
-            service.analyze(
-                audio_bytes=b"", mime_type="audio/wav", transcript="안녕하세요"
-            )
+            service.analyze(audio_bytes=b"", mime_type="audio/wav", transcript="안녕하세요")
 
         client.models.generate_content.assert_not_called()
 
@@ -54,9 +52,7 @@ class GeminiVoiceEmotionAnalyzerTests(unittest.TestCase):
         service, client = self._service({})
 
         with self.assertRaisesRegex(ValueError, "지원하지 않는 음성 형식"):
-            service.analyze(
-                audio_bytes=b"audio", mime_type="video/mp4", transcript="안녕하세요"
-            )
+            service.analyze(audio_bytes=b"audio", mime_type="video/mp4", transcript="안녕하세요")
 
         client.models.generate_content.assert_not_called()
 
@@ -95,6 +91,17 @@ class VoiceEmotionRequestTests(unittest.TestCase):
                 audio_mime_type="audio/wav",
             )
 
+    def test_optional_room_audio_fields_must_be_supplied_together(self):
+        from pydantic import ValidationError
+
+        from app.schemas.room_conversation import VoiceRoomTurnRequest
+
+        with self.assertRaisesRegex(ValidationError, "함께 입력"):
+            VoiceRoomTurnRequest(
+                transcript="안녕하세요",
+                audio_base64=base64.b64encode(b"RIFF-audio").decode(),
+            )
+
 
 class VoiceEmotionEndpointTests(unittest.TestCase):
     def test_endpoint_returns_structured_voice_feedback(self):
@@ -112,13 +119,17 @@ class VoiceEmotionEndpointTests(unittest.TestCase):
             impressions=["차분하게 들려요"],
             model="gemini-3.6-flash",
         )
-        with patch.dict(
-            "os.environ",
-            {"GUEST_SESSION_SECRET": "test-secret-32-bytes-minimum-value"},
-        ), patch(
-            "app.routers.room_conversation.get_voice_emotion_analyzer",
-            return_value=analyzer,
-        ), TestClient(app) as client:
+        with (
+            patch.dict(
+                "os.environ",
+                {"GUEST_SESSION_SECRET": "test-secret-32-bytes-minimum-value"},
+            ),
+            patch(
+                "app.routers.room_conversation.get_voice_emotion_analyzer",
+                return_value=analyzer,
+            ),
+            TestClient(app) as client,
+        ):
             response = client.post(
                 "/voice/emotion-analysis",
                 json={
@@ -137,13 +148,17 @@ class VoiceEmotionEndpointTests(unittest.TestCase):
         from app.main import app
 
         analyzer = Mock()
-        with patch.dict(
-            "os.environ",
-            {"GUEST_SESSION_SECRET": "test-secret-32-bytes-minimum-value"},
-        ), patch(
-            "app.routers.room_conversation.get_voice_emotion_analyzer",
-            return_value=analyzer,
-        ), TestClient(app) as client:
+        with (
+            patch.dict(
+                "os.environ",
+                {"GUEST_SESSION_SECRET": "test-secret-32-bytes-minimum-value"},
+            ),
+            patch(
+                "app.routers.room_conversation.get_voice_emotion_analyzer",
+                return_value=analyzer,
+            ),
+            TestClient(app) as client,
+        ):
             response = client.post(
                 "/voice/emotion-analysis",
                 json={

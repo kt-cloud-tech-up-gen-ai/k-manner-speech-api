@@ -138,6 +138,9 @@ class Scenario(Base):
     # (예: "수업 시간이 되어서 가봐야 해"). 이때 방은 FAILED가 된다.
     # 없으면 이 시나리오에 전용 마무리 대사가 없다는 뜻이다.
     turn_limit_exit_line: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 방에 들어오자마자 persona가 먼저 건네는 말. 이후 대화는 고정 대본이 아니라
+    # LLM이 시나리오 맥락과 대화 내역을 바탕으로 이어 간다.
+    opening_line: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     title_ko: Mapped[str] = mapped_column(String(160), nullable=False)
     title_en: Mapped[str | None] = mapped_column(String(160), nullable=True)

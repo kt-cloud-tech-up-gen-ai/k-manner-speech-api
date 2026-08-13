@@ -6,10 +6,13 @@ from pydantic import BaseModel, Field
 
 from app.schemas.emotion_tts import EmotionTtsResponse
 from app.schemas.user_input import UserInputAnalysis
-from app.schemas.voice_emotion import VoiceEmotionAnalysis, VoiceEmotionAnalysisRequest
+from app.schemas.voice_emotion import (
+    OptionalVoiceEmotionAnalysisRequest,
+    VoiceEmotionAnalysis,
+)
 
 
-class VoiceConversationRequest(VoiceEmotionAnalysisRequest):
+class VoiceConversationRequest(OptionalVoiceEmotionAnalysisRequest):
     """브라우저 STT가 확정한 음성 입력 텍스트."""
 
     persona: str = Field(min_length=1, max_length=100)
@@ -27,6 +30,7 @@ class ConversationResponse(BaseModel):
 
     input_type: Literal["voice", "text"]
     source_text: str
+    goal_achieved: bool = False
     persona: str
     analysis: UserInputAnalysis
     voice_emotion: VoiceEmotionAnalysis | None = None

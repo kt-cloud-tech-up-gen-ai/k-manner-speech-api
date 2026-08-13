@@ -19,11 +19,7 @@ class ConversationPipelineTests(unittest.TestCase):
             inferred_style="평범한 말투",
             user_intent="인사",
         )
-        chat = Mock(
-            return_value=ChatGeneration(
-                answer="안녕하세요", response_style="밝은 말투"
-            )
-        )
+        chat = Mock(return_value=ChatGeneration(answer="안녕하세요", response_style="밝은 말투"))
         tts = Mock()
         tts.generate.return_value = EmotionTtsResponse(
             text="안녕하세요",
@@ -56,13 +52,18 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer, voice_analyzer, chat, tts = self._dependencies()
         service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
+        scenario = {
+            "id": "ask-directions",
+            "communication_goal": "도윤 선배에게 길을 정중하게 묻는다",
+        }
         result = service.process_voice(
             VoiceConversationRequest(
                 transcript="안녕",
                 persona="doyun",
                 audio_base64="UklGRi1hdWRpbw==",
                 audio_mime_type="audio/wav",
-            )
+            ),
+            scenario=scenario,
         )
 
         self.assertEqual(result.input_type, "voice")
@@ -75,6 +76,23 @@ class ConversationPipelineTests(unittest.TestCase):
         )
         self.assertEqual(result.voice_emotion.emotions[0].label, "차분함")
         chat.assert_called_once()
+        self.assertEqual(chat.call_args.kwargs["scenario"], scenario)
+        self.assertIn("voice_emotion", chat.call_args.kwargs["analysis"])
+        self.assertIn("listener_impressions", chat.call_args.kwargs["analysis"])
+        tts.generate.assert_called_once()
+
+    def test_transcript_only_voice_request_keeps_legacy_flow(self):
+        from app.schemas.conversation import VoiceConversationRequest
+        from app.services.conversation_pipeline import ConversationPipelineService
+
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
+
+        result = service.process_voice(VoiceConversationRequest(transcript="안녕", persona="doyun"))
+
+        self.assertIsNone(result.voice_emotion, "AC-PR19-LEGACY-VOICE-COMPAT")
+        voice_analyzer.analyze.assert_not_called()
+        chat.assert_called_once()
         tts.generate.assert_called_once()
 
     def test_text_runs_the_same_pipeline_including_tts(self):
@@ -84,8 +102,13 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer, voice_analyzer, chat, tts = self._dependencies()
         service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
+        scenario = {
+            "id": "ask-directions",
+            "communication_goal": "도윤 선배에게 길을 정중하게 묻는다",
+        }
         result = service.process_text(
-            TextConversationRequest(text="안녕", persona="doyun")
+            TextConversationRequest(text="안녕", persona="doyun"),
+            scenario=scenario,
         )
 
         self.assertEqual(result.input_type, "text")
@@ -93,6 +116,7 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer.analyze_text.assert_called_once_with("안녕")
         voice_analyzer.analyze.assert_not_called()
         chat.assert_called_once()
+        self.assertEqual(chat.call_args.kwargs["scenario"], scenario)
         tts.generate.assert_called_once()
 
     def test_missing_response_style_stops_before_tts(self):
@@ -104,11 +128,37 @@ class ConversationPipelineTests(unittest.TestCase):
         service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
         with self.assertRaisesRegex(RuntimeError, "답변 말투"):
-            service.process_text(
-                TextConversationRequest(text="안녕", persona="doyun")
-            )
+            service.process_text(TextConversationRequest(text="안녕", persona="doyun"))
 
         tts.generate.assert_not_called()
+
+    def test_replace_answer_regenerates_matching_tts(self):
+        from app.schemas.conversation import TextConversationRequest
+        from app.services.conversation_pipeline import ConversationPipelineService
+
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
+        original = service.process_text(TextConversationRequest(text="안녕", persona="doyun"))
+        tts.reset_mock()
+        replacement_audio = EmotionTtsResponse(
+            text="수업 시간이 다 돼서 가봐야 해.",
+            speaking_style=original.response_style,
+            audio_path=str(Path("app/outputs/exit.wav").resolve()),
+            metadata_path=str(Path("app/outputs/exit.json").resolve()),
+            tts_provider="gemini",
+            tts_model="gemini-3.1-flash-tts-preview",
+            voice_name="Kore",
+        )
+        tts.generate.return_value = replacement_audio
+
+        replaced = service.replace_answer(original, "수업 시간이 다 돼서 가봐야 해.")
+
+        self.assertEqual(replaced.answer, replacement_audio.text)
+        self.assertEqual(replaced.audio.text, replacement_audio.text)
+        self.assertEqual(replaced.audio.audio_path, replacement_audio.audio_path)
+        request = tts.generate.call_args.args[0]
+        self.assertEqual(request.text, replacement_audio.text)
+        self.assertEqual(request.speaking_style, original.response_style)
 
     def test_openapi_exposes_room_conversation_entrypoints(self):
         import app.main

@@ -1,3 +1,4 @@
+import ast
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,6 +7,18 @@ from unittest.mock import patch
 
 
 class MediaStorageTests(unittest.TestCase):
+    def test_bootstrap_requires_portable_source_argument(self):
+        script_path = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "bootstrap_media_storage.py"
+        )
+        source = script_path.read_text(encoding="utf-8")
+        functions = {node.name for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
+
+        self.assertIn("build_parser", functions, "AC-PR18-BOOTSTRAP-SOURCE-ARG")
+        self.assertNotIn("/Users/mac/", source, "AC-PR18-NO-DEVELOPER-PATH")
+
     @patch("app.services.media_storage.urlopen")
     @patch("app.services.media_storage.get_supabase_service_role_key", return_value="service-key")
     @patch("app.services.media_storage.get_supabase_url", return_value="https://project.supabase.co")

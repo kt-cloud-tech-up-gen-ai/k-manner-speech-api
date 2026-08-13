@@ -125,6 +125,11 @@ class CatalogQueryTests(unittest.TestCase):
                 scenario, from_attributes=True
             )
             self.assertEqual(scenario_summary.place_context, "회사 회의실")
+            self.assertEqual(scenario_summary.title_ko, "면접 상황 대화 연습")
+            self.assertEqual(
+                scenario_summary.communication_goal,
+                "면접관의 질문에 존댓말로 끝까지 답한다",
+            )
 
             scenario_detail = ScenarioResponse.model_validate(
                 scenario, from_attributes=True
@@ -140,7 +145,7 @@ class CatalogQueryTests(unittest.TestCase):
         self.assertNotIn(
             "relationship_description", PersonaSummaryResponse.model_fields
         )
-        for field in ("communication_goal", "end_condition", "max_turns"):
+        for field in ("end_condition", "max_turns"):
             with self.subTest(field=field):
                 self.assertNotIn(field, ScenarioSummaryResponse.model_fields)
 
