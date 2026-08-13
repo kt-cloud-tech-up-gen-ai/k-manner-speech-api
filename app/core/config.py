@@ -77,7 +77,7 @@ def get_tts_settings() -> TtsSettings:
     return TtsSettings(
         google_api_key=api_key,
         tts_model=os.getenv("TTS_MODEL", "gemini-3.1-flash-tts-preview"),
-        voice_name=os.getenv("GEMINI_TTS_VOICE_NAME", "Kore"),
+        voice_name=os.getenv("GEMINI_TTS_VOICE_NAME", "Achird"),
         output_dir=output_dir,
     )
 
