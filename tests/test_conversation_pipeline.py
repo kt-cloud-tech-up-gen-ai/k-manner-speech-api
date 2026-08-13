@@ -34,22 +34,46 @@ class ConversationPipelineTests(unittest.TestCase):
             tts_model="gemini-3.1-flash-tts-preview",
             voice_name="Kore",
         )
-        return analyzer, chat, tts
+        voice_analyzer = Mock()
+        from app.schemas.voice_emotion import EmotionScore, VoiceEmotionAnalysis
+
+        voice_analyzer.analyze.return_value = VoiceEmotionAnalysis(
+            transcript=text,
+            emotions=[
+                EmotionScore(label="차분함", percentage=70),
+                EmotionScore(label="친절함", percentage=20),
+                EmotionScore(label="긴장감", percentage=10),
+            ],
+            impressions=["차분하게 들려요"],
+            model="gemini-3.6-flash",
+        )
+        return analyzer, voice_analyzer, chat, tts
 
     def test_voice_runs_analysis_chat_and_tts_once(self):
         from app.schemas.conversation import VoiceConversationRequest
         from app.services.conversation_pipeline import ConversationPipelineService
 
-        analyzer, chat, tts = self._dependencies()
-        service = ConversationPipelineService(analyzer, chat, tts)
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
         result = service.process_voice(
-            VoiceConversationRequest(transcript="안녕", persona="doyun")
+            VoiceConversationRequest(
+                transcript="안녕",
+                persona="doyun",
+                audio_base64="UklGRi1hdWRpbw==",
+                audio_mime_type="audio/wav",
+            )
         )
 
         self.assertEqual(result.input_type, "voice")
         self.assertEqual(result.answer, "안녕하세요")
         analyzer.analyze_text.assert_called_once_with("안녕")
+        voice_analyzer.analyze.assert_called_once_with(
+            audio_bytes=b"RIFF-audio",
+            mime_type="audio/wav",
+            transcript="안녕",
+        )
+        self.assertEqual(result.voice_emotion.emotions[0].label, "차분함")
         chat.assert_called_once()
         tts.generate.assert_called_once()
 
@@ -57,8 +81,8 @@ class ConversationPipelineTests(unittest.TestCase):
         from app.schemas.conversation import TextConversationRequest
         from app.services.conversation_pipeline import ConversationPipelineService
 
-        analyzer, chat, tts = self._dependencies()
-        service = ConversationPipelineService(analyzer, chat, tts)
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
         scenario = {
             "id": "ask-directions",
@@ -72,6 +96,7 @@ class ConversationPipelineTests(unittest.TestCase):
         self.assertEqual(result.input_type, "text")
         self.assertEqual(result.audio.voice_name, "Kore")
         analyzer.analyze_text.assert_called_once_with("안녕")
+        voice_analyzer.analyze.assert_not_called()
         chat.assert_called_once()
         self.assertEqual(chat.call_args.kwargs["scenario"], scenario)
         tts.generate.assert_called_once()
@@ -80,9 +105,9 @@ class ConversationPipelineTests(unittest.TestCase):
         from app.schemas.conversation import TextConversationRequest
         from app.services.conversation_pipeline import ConversationPipelineService
 
-        analyzer, chat, tts = self._dependencies()
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
         chat.return_value = SimpleNamespace(answer="안녕하세요", response_style="")
-        service = ConversationPipelineService(analyzer, chat, tts)
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
         with self.assertRaisesRegex(RuntimeError, "답변 말투"):
             service.process_text(
@@ -95,8 +120,8 @@ class ConversationPipelineTests(unittest.TestCase):
         from app.schemas.conversation import TextConversationRequest
         from app.services.conversation_pipeline import ConversationPipelineService
 
-        analyzer, chat, tts = self._dependencies()
-        service = ConversationPipelineService(analyzer, chat, tts)
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
         original = service.process_text(TextConversationRequest(text="안녕", persona="doyun"))
         tts.reset_mock()
         replacement_audio = EmotionTtsResponse(
