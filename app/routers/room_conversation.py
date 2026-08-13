@@ -27,6 +27,7 @@ from app.schemas.rooms import (
     SendMessageRequest,
     SendMessageResponse,
 )
+from app.schemas.voice_emotion import VoiceEmotionAnalysis, VoiceEmotionAnalysisRequest
 from app.services import catalog
 from app.services.conversation_pipeline import ConversationPipelineService
 from app.services.feedback import (
@@ -38,6 +39,7 @@ from app.services.feedback import (
 )
 from app.services.gemini_answer_audio_generator import GeminiAnswerAudioGenerator
 from app.services.gemini_user_text_analyzer import GeminiUserTextAnalyzer
+from app.services.gemini_voice_emotion_analyzer import GeminiVoiceEmotionAnalyzer
 from app.services.llm import generate_answer, generate_structured_answer
 from app.services.media_storage import SupabaseMediaStorage
 from app.services.room_conversation import RoomConversationService
@@ -53,10 +55,35 @@ def get_room_conversation_service() -> RoomConversationService:
         analyzer=GeminiUserTextAnalyzer(
             genai.Client(api_key=settings.gemini_api_key), settings.emotion_model
         ),
+        voice_analyzer=GeminiVoiceEmotionAnalyzer(
+            genai.Client(api_key=settings.gemini_api_key), settings.voice_emotion_model
+        ),
         chat_generator=generate_structured_answer,
         tts_service=GeminiAnswerAudioGenerator(get_tts_settings()),
     )
     return RoomConversationService(conversation, generate_feedback)
+
+
+@lru_cache
+def get_voice_emotion_analyzer() -> GeminiVoiceEmotionAnalyzer:
+    settings = get_settings()
+    return GeminiVoiceEmotionAnalyzer(
+        genai.Client(api_key=settings.gemini_api_key), settings.voice_emotion_model
+    )
+
+
+@router.post("/voice/emotion-analysis", response_model=VoiceEmotionAnalysis)
+def analyze_voice_emotion(
+    request: VoiceEmotionAnalysisRequest,
+    _actor: Actor = Depends(get_actor),
+) -> VoiceEmotionAnalysis:
+    """녹음 음성의 감정 비율과 상대가 받을 인상을 분석한다."""
+
+    return get_voice_emotion_analyzer().analyze(
+        audio_bytes=request.audio_bytes(),
+        mime_type=request.audio_mime_type,
+        transcript=request.transcript,
+    )
 
 
 def _process_room_turn(

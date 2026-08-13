@@ -47,7 +47,11 @@ class RoomConversationService:
         self, request: VoiceRoomTurnRequest, context: RoomConversationContext
     ) -> RoomConversationResult:
         conversation_request = VoiceConversationRequest(
-            transcript=request.transcript, persona=context.persona_id
+            transcript=request.transcript,
+            persona=context.persona_id,
+            audio_base64=request.audio_base64,
+            audio_mime_type=request.audio_mime_type,
+            duration_seconds=request.duration_seconds,
         )
         return self._process(
             self.conversation.process_voice, conversation_request, context

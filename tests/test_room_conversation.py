@@ -91,6 +91,7 @@ class RoomConversationTests(unittest.TestCase):
         paths = app.main.app.openapi()["paths"]
         self.assertIn("/rooms/{room_id}/turns/text", paths)
         self.assertIn("/rooms/{room_id}/turns/voice", paths)
+        self.assertIn("/voice/emotion-analysis", paths)
         self.assertNotIn("/api/v1/conversation/text", paths)
         self.assertNotIn("/api/v1/conversation/voice", paths)
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.conversation import ConversationResponse
 from app.schemas.rooms import ChatMessageResponse
+from app.schemas.voice_emotion import VoiceEmotionAnalysisRequest
 from app.services.feedback import FeedbackMessage, FeedbackResult
 
 
@@ -11,8 +12,8 @@ class TextRoomTurnRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4_000)
 
 
-class VoiceRoomTurnRequest(BaseModel):
-    transcript: str = Field(min_length=1, max_length=4_000)
+class VoiceRoomTurnRequest(VoiceEmotionAnalysisRequest):
+    pass
 
 
 class RoomConversationContext(BaseModel):
