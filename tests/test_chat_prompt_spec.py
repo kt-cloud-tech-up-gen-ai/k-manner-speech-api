@@ -56,6 +56,68 @@ class ChatPromptSpecTests(PromptTestCase):
         self.assertIn(CONCISE_TEXT, prompt)
 
 
+class ScenarioChatPromptTests(PromptTestCase):
+    def test_scenario_rules_are_rendered_before_the_question(self):
+        prompt = build_chat_prompt(
+            question="선배님, 교무처가 어디인지 여쭤봐도 될까요?",
+            persona=PERSONA_ID,
+            scenario={
+                "id": "campus_directions_senior",
+                "description": "후배가 도윤 선배에게 교무처 위치를 묻는 상황",
+                "time_context": "평일 오후, 수업 시작 15분 전",
+                "place_context": "캠퍼스 중앙 광장",
+                "communication_goal": "존댓말로 위치를 묻고 안내를 확인한다",
+                "end_condition": "본관 1층임을 확인하고 감사하면 종료",
+                "max_turns": 10,
+                "turn_limit_exit_line": "본관 1층 안내 데스크에 물어봐.",
+            },
+        )
+
+        self.assertIn("## 현재 대화 시나리오", prompt)
+        self.assertIn("시나리오의 관계·상황 설정", prompt)
+        self.assertIn("페르소나의 일반 배경보다 우선", prompt)
+        for expected in (
+            "campus_directions_senior",
+            "후배가 도윤 선배에게 교무처 위치를 묻는 상황",
+            "평일 오후, 수업 시작 15분 전",
+            "캠퍼스 중앙 광장",
+            "존댓말로 위치를 묻고 안내를 확인한다",
+            "본관 1층임을 확인하고 감사하면 종료",
+            "10",
+            "본관 1층 안내 데스크에 물어봐.",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, prompt)
+        self.assertLess(prompt.index("## 현재 대화 시나리오"), prompt.index("사용자 질문:"))
+
+    def test_scenario_omits_missing_optional_context(self):
+        prompt = build_chat_prompt(
+            question="안녕하세요",
+            scenario={
+                "id": "minimal",
+                "description": "짧은 연습",
+                "time_context": None,
+                "place_context": None,
+                "communication_goal": "정중하게 인사한다",
+                "end_condition": "서로 인사하면 종료",
+                "max_turns": 3,
+                "turn_limit_exit_line": None,
+            },
+        )
+
+        self.assertIn("정중하게 인사한다", prompt)
+        self.assertNotIn("시간: ", prompt)
+        self.assertNotIn("장소: ", prompt)
+        self.assertNotIn("턴 상한 마무리: ", prompt)
+        self.assertNotIn("None", prompt)
+
+    def test_scenario_section_is_omitted_for_free_talk(self):
+        prompt = build_chat_prompt(question="안녕하세요", scenario=None)
+
+        self.assertNotIn("현재 대화 시나리오", prompt)
+        self.assertNotIn("페르소나의 일반 배경보다 우선", prompt)
+
+
 class ChatHistoryTests(PromptTestCase):
     """대화 이력을 프롬프트에 싣는 규약. (routers/rooms.py의 send_message가 쓴다)"""
 

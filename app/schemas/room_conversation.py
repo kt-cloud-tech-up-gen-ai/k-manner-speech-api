@@ -25,6 +25,7 @@ class RoomConversationContext(BaseModel):
     persona_description: str
     scenario_description: str | None
     communication_goal: str | None
+    scenario_context: dict[str, object] | None = None
     history: list[dict[str, str]]
     feedback_messages: list[FeedbackMessage]
 

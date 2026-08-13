@@ -27,6 +27,7 @@ class ConversationResponse(BaseModel):
 
     input_type: Literal["voice", "text"]
     source_text: str
+    goal_achieved: bool = False
     persona: str
     analysis: UserInputAnalysis
     voice_emotion: VoiceEmotionAnalysis | None = None

@@ -84,8 +84,13 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer, voice_analyzer, chat, tts = self._dependencies()
         service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
 
+        scenario = {
+            "id": "ask-directions",
+            "communication_goal": "도윤 선배에게 길을 정중하게 묻는다",
+        }
         result = service.process_text(
-            TextConversationRequest(text="안녕", persona="doyun")
+            TextConversationRequest(text="안녕", persona="doyun"),
+            scenario=scenario,
         )
 
         self.assertEqual(result.input_type, "text")
@@ -93,6 +98,7 @@ class ConversationPipelineTests(unittest.TestCase):
         analyzer.analyze_text.assert_called_once_with("안녕")
         voice_analyzer.analyze.assert_not_called()
         chat.assert_called_once()
+        self.assertEqual(chat.call_args.kwargs["scenario"], scenario)
         tts.generate.assert_called_once()
 
     def test_missing_response_style_stops_before_tts(self):
@@ -109,6 +115,34 @@ class ConversationPipelineTests(unittest.TestCase):
             )
 
         tts.generate.assert_not_called()
+
+    def test_replace_answer_regenerates_matching_tts(self):
+        from app.schemas.conversation import TextConversationRequest
+        from app.services.conversation_pipeline import ConversationPipelineService
+
+        analyzer, voice_analyzer, chat, tts = self._dependencies()
+        service = ConversationPipelineService(analyzer, voice_analyzer, chat, tts)
+        original = service.process_text(TextConversationRequest(text="안녕", persona="doyun"))
+        tts.reset_mock()
+        replacement_audio = EmotionTtsResponse(
+            text="수업 시간이 다 돼서 가봐야 해.",
+            speaking_style=original.response_style,
+            audio_path=str(Path("app/outputs/exit.wav").resolve()),
+            metadata_path=str(Path("app/outputs/exit.json").resolve()),
+            tts_provider="gemini",
+            tts_model="gemini-3.1-flash-tts-preview",
+            voice_name="Kore",
+        )
+        tts.generate.return_value = replacement_audio
+
+        replaced = service.replace_answer(original, "수업 시간이 다 돼서 가봐야 해.")
+
+        self.assertEqual(replaced.answer, replacement_audio.text)
+        self.assertEqual(replaced.audio.text, replacement_audio.text)
+        self.assertEqual(replaced.audio.audio_path, replacement_audio.audio_path)
+        request = tts.generate.call_args.args[0]
+        self.assertEqual(request.text, replacement_audio.text)
+        self.assertEqual(request.speaking_style, original.response_style)
 
     def test_openapi_exposes_room_conversation_entrypoints(self):
         import app.main
