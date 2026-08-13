@@ -316,9 +316,9 @@ http://127.0.0.1:8000/web-speech-test
 
 - STT 구현: `SpeechRecognition` 또는 `webkitSpeechRecognition`
 - 인식 언어: `ko-KR`
-- 음성 인식이 끝나면 확정 텍스트를 `POST /rooms/{room_id}/turns/voice`로 보내 감정분석, 페르소나 답변·말투 생성, Gemini TTS와 피드백을 실행합니다.
+- 음성 인식이 끝나면 확정 텍스트와 브라우저가 녹음한 Base64 음성을 `POST /rooms/{room_id}/turns/voice`로 보내 텍스트·음성 감정분석, 페르소나 답변·말투 생성, Gemini TTS와 피드백을 실행합니다.
 - 텍스트를 직접 입력한 경우에는 `POST /rooms/{room_id}/turns/text`로 같은 대화·피드백 흐름을 실행합니다.
-- K-MANNER 서버는 원본 음성을 받지 않고, 브라우저가 생성한 확정 텍스트만 받습니다.
+- K-MANNER 서버는 음성 감정분석을 위해 최대 20MB의 Base64 원본 음성을 받으며, 지원 MIME type만 허용합니다.
 - Web Speech API의 실제 처리 위치는 브라우저 구현에 따라 다르므로 항상 온디바이스 처리라고 보장되지는 않습니다.
 
 ### `GET /health`
@@ -1162,11 +1162,11 @@ TTS 생성은 `app/services/gemini_answer_audio_generator.py`가 담당하며 �
 
 ### 음성·텍스트 페르소나 대화 API
 
-음성 STT 변환문 또는 직접 입력한 텍스트를 전달하면 감정분석, 페르소나 채팅,
+음성 STT 변환문과 Base64 녹음 또는 직접 입력한 텍스트를 전달하면 감정분석, 페르소나 채팅,
 Gemini TTS를 순서대로 한 번씩 실행합니다. 두 입력 모두 분석 결과, 답변, 답변 말투,
 WAV·메타데이터 경로를 포함한 동일한 응답을 반환합니다.
 
-- 음성(STT 변환문): `POST /rooms/{room_id}/turns/voice`, 입력 필드 `transcript`
+- 음성(STT 변환문 + 선택 녹음): `POST /rooms/{room_id}/turns/voice`, 입력 필드 `transcript`, 선택 필드 `audio_base64`, `audio_mime_type`, `duration_seconds`. 기존 클라이언트처럼 녹음을 생략하면 텍스트 감정분석만 실행하며, 녹음을 보낼 때 `audio_base64`와 `audio_mime_type`을 함께 보내야 합니다.
 - 직접 텍스트: `POST /rooms/{room_id}/turns/text`, 입력 필드 `text`
 
 Persona·Scenario·대화 목표·이전 메시지·사용자 ID는 요청 본문이 아니라 인증된 Room에서
@@ -1175,9 +1175,12 @@ Persona·Scenario·대화 목표·이전 메시지·사용자 ID는 요청 본�
 ```json
 {
   "transcript": "오늘 정말 기분 좋은 일이 있었어.",
-  "persona": "friendly"
+  "audio_base64": "UklGRi1hdWRpbw==",
+  "audio_mime_type": "audio/wav",
+  "duration_seconds": 1.2
 }
 ```
 
 이 API는 STT 엔진 자체를 실행하지 않습니다. `/web-speech-test` 같은 STT 단계가 확정한
-텍스트를 받아 이후 Gemini 파이프라인 전체를 실행합니다.
+텍스트와 녹음 음성을 받아 이후 Gemini 파이프라인 전체를 실행합니다. 음성 감정분석만
+필요하면 동일한 음성 입력 계약의 `POST /voice/emotion-analysis`를 사용할 수 있습니다.

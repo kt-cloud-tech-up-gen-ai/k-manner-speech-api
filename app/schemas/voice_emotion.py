@@ -3,7 +3,7 @@
 import base64
 import binascii
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
 SUPPORTED_AUDIO_MIME_TYPES = {
@@ -36,7 +36,9 @@ class VoiceEmotionAnalysisRequest(BaseModel):
 
     @field_validator("audio_mime_type")
     @classmethod
-    def validate_audio_mime_type(cls, value: str) -> str:
+    def validate_audio_mime_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         clean_value = value.split(";", 1)[0].strip().lower()
         if clean_value not in SUPPORTED_AUDIO_MIME_TYPES:
             raise ValueError(f"지원하지 않는 음성 형식입니다: {clean_value}")
@@ -44,7 +46,9 @@ class VoiceEmotionAnalysisRequest(BaseModel):
 
     @field_validator("audio_base64")
     @classmethod
-    def validate_audio_base64(cls, value: str) -> str:
+    def validate_audio_base64(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         try:
             decoded = base64.b64decode(value, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -56,6 +60,24 @@ class VoiceEmotionAnalysisRequest(BaseModel):
         return value
 
     def audio_bytes(self) -> bytes:
+        return base64.b64decode(self.audio_base64, validate=True)
+
+
+class OptionalVoiceEmotionAnalysisRequest(VoiceEmotionAnalysisRequest):
+    """기존 transcript-only 음성 턴과 새 녹음 입력을 함께 지원한다."""
+
+    audio_base64: str | None = Field(default=None, min_length=1, max_length=28_000_000)
+    audio_mime_type: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_audio_pair(self) -> "OptionalVoiceEmotionAnalysisRequest":
+        if (self.audio_base64 is None) != (self.audio_mime_type is None):
+            raise ValueError("audio_base64와 audio_mime_type은 함께 입력해야 합니다.")
+        return self
+
+    def audio_bytes(self) -> bytes | None:
+        if self.audio_base64 is None:
+            return None
         return base64.b64decode(self.audio_base64, validate=True)
 
 

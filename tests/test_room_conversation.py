@@ -71,9 +71,7 @@ class RoomConversationTests(unittest.TestCase):
                 "communication_goal": "자연스럽게 길 묻기",
             },
             history=[{"role": "assistant", "content": "무엇을 도와드릴까요?"}],
-            feedback_messages=[
-                FeedbackMessage(id="m1", role="user", content="안녕하세요")
-            ],
+            feedback_messages=[FeedbackMessage(id="m1", role="user", content="안녕하세요")],
         )
 
         result = service.process_text(TextRoomTurnRequest(text="안녕하세요"), context)
@@ -82,17 +80,13 @@ class RoomConversationTests(unittest.TestCase):
         self.assertEqual(result.feedback.score, 90)
         conversation_request = conversation.process_text.call_args.args[0]
         self.assertEqual(conversation_request.persona, "doyun")
-        self.assertEqual(
-            conversation.process_text.call_args.kwargs["history"], context.history
-        )
+        self.assertEqual(conversation.process_text.call_args.kwargs["history"], context.history)
         self.assertEqual(
             conversation.process_text.call_args.kwargs["scenario"],
             context.scenario_context,
         )
         self.assertEqual(feedback.call_args.kwargs["user_id"], "user-1")
-        self.assertEqual(
-            feedback.call_args.kwargs["communication_goal"], "자연스럽게 길 묻기"
-        )
+        self.assertEqual(feedback.call_args.kwargs["communication_goal"], "자연스럽게 길 묻기")
 
     def test_replace_answer_preserves_feedback_and_regenerates_conversation(self):
         from app.schemas.room_conversation import RoomConversationResult

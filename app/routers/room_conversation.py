@@ -205,13 +205,24 @@ def _process_room_turn(
         room_id=room.id,
         message_id=assistant_message.id,
     )
+    persisted_feedback = result.feedback.model_dump(mode="json")
+    persisted_feedback["turn"] = {
+        "input_type": result.conversation.input_type,
+        "duration_seconds": (
+            (request.duration_seconds or 0) if isinstance(request, VoiceRoomTurnRequest) else 0
+        ),
+        "voice_emotion": (
+            result.conversation.voice_emotion.model_dump(mode="json")
+            if result.conversation.voice_emotion else None
+        ),
+    }
     feedback = ChatFeedback(
         room_id=room.id,
         last_message_id=user_message.id,
         model=FEEDBACK_MODEL,
         prompt_version=FEEDBACK_PROMPT_VERSION,
         score=result.feedback.score,
-        result_json=result.feedback.model_dump(mode="json"),
+        result_json=persisted_feedback,
     )
     db.add(feedback)
     db.commit()
@@ -269,9 +280,23 @@ def list_messages(
     db: Session = Depends(get_db),
 ) -> ChatMessageListResponse:
     room = _get_room_or_404(db, room_id, actor)
-    return ChatMessageListResponse(
-        messages=[_to_message_response(message) for message in room.messages]
-    )
+    feedback_by_message = {item.last_message_id: item.result_json for item in room.feedbacks}
+    messages = []
+    for message in room.messages:
+        stored = feedback_by_message.get(message.id)
+        message_feedback = None
+        if stored is not None:
+            turn = stored.get("turn", {})
+            message_feedback = {
+                "input_type": turn.get("input_type", "text"),
+                "duration_seconds": turn.get("duration_seconds", 0),
+                "score": stored["score"],
+                "summary": stored["summary"],
+                "improvements": stored.get("improvements", []),
+                "voice_emotion": turn.get("voice_emotion"),
+            }
+        messages.append(_to_message_response(message, feedback=message_feedback))
+    return ChatMessageListResponse(messages=messages)
 
 
 @router.get("/rooms/{room_id}/messages/{message_id}/audio")

@@ -6,6 +6,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.emotion_group import Emotion
+from app.schemas.voice_emotion import VoiceEmotionAnalysis
 
 # CategoryScores/FeedbackIssue는 여기로 옮기지 않는다. 이 둘은 FeedbackResult의 일부로
 # chat_feedbacks.result_json에 그대로 저장·역직렬화되는 **영속 계약**이라, 소유권이
@@ -51,12 +52,22 @@ class RoomListResponse(BaseModel):
     rooms: list[RoomResponse]
 
 
+class MessageFeedbackResponse(BaseModel):
+    input_type: str
+    duration_seconds: float = 0
+    score: int
+    summary: str
+    improvements: list[str]
+    voice_emotion: VoiceEmotionAnalysis | None = None
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: str
     content: str
     created_at: datetime
     audio_url: str | None = None
+    feedback: MessageFeedbackResponse | None = None
 
 
 class ChatMessageListResponse(BaseModel):
