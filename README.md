@@ -100,6 +100,7 @@ cp .env.example .env
 | `GEMINI_API_KEY` | 선택 | `GOOGLE_API_KEY`가 없을 때 사용하는 대체 키. |
 | `CHAT_MODEL` | 선택 | 채팅 답변 생성 모델. 기본값은 `gemini-3.1-flash-lite`. |
 | `EMOTION_MODEL` | 선택 | 텍스트 감정·말투·의도 분석 모델. 기본값은 `gemini-3.1-flash-lite`. |
+| `VOICE_EMOTION_MODEL` | 선택 | 녹음 음성의 톤·속도·강세와 상대 인상을 분석하는 멀티모달 모델. 기본값은 `gemini-3.6-flash`. 텍스트 입력에서는 호출하지 않습니다. |
 | `OPENAI_API_KEY` | 표현 피드백 사용 시 | GPT-5.6 Luna Responses API 키. 표현 피드백에서만 사용하며 클라이언트·로그·커밋에 노출하지 않습니다. |
 | `FEEDBACK_MODEL` | 선택 | 표현 피드백 OpenAI 모델. 기본값은 `gpt-5.6-luna`이며 `OPENAI_API_KEY`를 사용합니다. |
 | `SUPABASE_URL` | 인증 사용 시 | Supabase 프로젝트 URL (`https://<project-ref>.supabase.co`). |

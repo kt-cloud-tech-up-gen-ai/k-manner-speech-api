@@ -15,6 +15,7 @@ load_dotenv()
 # 모델 버전의 코드 기본값. .env에서 각 변수를 설정하면 그 값이 우선한다.
 DEFAULT_CHAT_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_EMOTION_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_VOICE_EMOTION_MODEL = "gemini-3.6-flash"
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", DEFAULT_CHAT_MODEL)
 FEEDBACK_MODEL = os.getenv("FEEDBACK_MODEL", "gpt-5.6-luna")
@@ -26,6 +27,7 @@ class Settings:
 
     gemini_api_key: str
     emotion_model: str
+    voice_emotion_model: str
 
 
 @lru_cache
@@ -38,6 +40,9 @@ def get_settings() -> Settings:
     return Settings(
         gemini_api_key=api_key,
         emotion_model=os.getenv("EMOTION_MODEL", DEFAULT_EMOTION_MODEL),
+        voice_emotion_model=os.getenv(
+            "VOICE_EMOTION_MODEL", DEFAULT_VOICE_EMOTION_MODEL
+        ),
     )
 
 

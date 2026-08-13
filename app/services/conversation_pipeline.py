@@ -11,6 +11,7 @@ from app.schemas.conversation import (
 )
 from app.schemas.emotion_tts import EmotionTtsRequest, EmotionTtsResponse
 from app.schemas.user_input import UserInputAnalysis
+from app.schemas.voice_emotion import VoiceEmotionAnalysis
 from app.services.llm import ChatGeneration
 
 
@@ -25,16 +26,24 @@ class TtsGenerator(Protocol):
 ChatGenerator = Callable[..., ChatGeneration]
 
 
+class VoiceEmotionAnalyzer(Protocol):
+    def analyze(
+        self, *, audio_bytes: bytes, mime_type: str, transcript: str
+    ) -> VoiceEmotionAnalysis: ...
+
+
 class ConversationPipelineService:
     """음성·텍스트 입력에 동일한 3단계 페르소나 대화 흐름을 적용한다."""
 
     def __init__(
         self,
         analyzer: TextAnalyzer,
+        voice_analyzer: VoiceEmotionAnalyzer,
         chat_generator: ChatGenerator,
         tts_service: TtsGenerator,
     ) -> None:
         self.analyzer = analyzer
+        self.voice_analyzer = voice_analyzer
         self.chat_generator = chat_generator
         self.tts_service = tts_service
 
@@ -45,11 +54,17 @@ class ConversationPipelineService:
         history: list[dict[str, str]] | None = None,
         scenario: Mapping[str, object] | None = None,
     ) -> ConversationResponse:
+        voice_emotion = self.voice_analyzer.analyze(
+            audio_bytes=request.audio_bytes(),
+            mime_type=request.audio_mime_type,
+            transcript=request.transcript,
+        )
         return self._process(
             "voice",
             request.transcript,
             request.persona,
             history=history,
+            voice_emotion=voice_emotion,
             scenario=scenario,
         )
 
@@ -65,6 +80,7 @@ class ConversationPipelineService:
             request.text,
             request.persona,
             history=history,
+            voice_emotion=None,
             scenario=scenario,
         )
 
@@ -88,6 +104,7 @@ class ConversationPipelineService:
         persona: str,
         *,
         history: list[dict[str, str]] | None,
+        voice_emotion: VoiceEmotionAnalysis | None,
         scenario: Mapping[str, object] | None,
     ) -> ConversationResponse:
         started_at = perf_counter()
@@ -99,14 +116,22 @@ class ConversationPipelineService:
             raise ValueError("답변에 사용할 페르소나를 입력하세요.")
 
         analysis = self.analyzer.analyze_text(clean_text)
+        chat_analysis = {
+            "emotion": analysis.user_emotion.value,
+            "inferred_style": analysis.inferred_style or "",
+            "intent": analysis.user_intent,
+        }
+        if voice_emotion is not None:
+            chat_analysis["voice_emotion"] = ", ".join(
+                f"{item.label} {item.percentage}%" for item in voice_emotion.emotions
+            )
+            chat_analysis["listener_impressions"] = ", ".join(
+                voice_emotion.impressions
+            )
         chat_result = self.chat_generator(
             clean_text,
             persona=clean_persona,
-            analysis={
-                "emotion": analysis.user_emotion.value,
-                "inferred_style": analysis.inferred_style or "",
-                "intent": analysis.user_intent,
-            },
+            analysis=chat_analysis,
             history=history,
             scenario=scenario,
         )
@@ -125,6 +150,7 @@ class ConversationPipelineService:
             source_text=clean_text,
             persona=clean_persona,
             analysis=analysis,
+            voice_emotion=voice_emotion,
             answer=answer,
             goal_achieved=chat_result.goal_achieved,
             response_style=response_style,
